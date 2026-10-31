@@ -10,6 +10,6 @@ declare const process: {
 
 export const env = Object.freeze({
   useMock: process.env.EXPO_PUBLIC_USE_MOCK !== 'false',
-  robotApiUrl: process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() ?? '',
-  robotId: process.env.EXPO_PUBLIC_ROBOT_ID?.trim() || 'MAR-01',
+  robotApiUrl: process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() || 'http://localhost:8080',
+  robotId: process.env.EXPO_PUBLIC_ROBOT_ID?.trim() || 'ROBOT_MAR_01',
 });

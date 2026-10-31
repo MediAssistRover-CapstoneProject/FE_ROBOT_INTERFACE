@@ -35,7 +35,7 @@ interface ClinicDestination {
   aheadCount: number;
 }
 
-// Bảng danh mục khoa phòng bệnh viện chuẩn (Hybrid Fallback khi Railway DB rỗng)
+// Bảng danh mục khoa phòng bệnh viện chuẩn (Hybrid Fallback khi Local DB rỗng)
 const DEFAULT_HOSPITAL_ROOMS: ClinicDestination[] = [
   {
     id: 'room-102',
@@ -184,7 +184,7 @@ export function PatientHubScreen({ navigation }: Props) {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch Public Rooms & Zones from Live Railway API on mount (Hybrid Mode)
+  // Fetch Public Rooms & Zones from Local Backend API on mount (Hybrid Mode)
   useEffect(() => {
     let alive = true;
 
@@ -200,7 +200,7 @@ export function PatientHubScreen({ navigation }: Props) {
         lastCall: 'GET /api/v1/public/zones',
         lastResult: ping.ok
           ? `200 OK (${ping.latencyMs}ms) · Server hoạt động`
-          : ping.error || 'Mất kết nối Railway',
+          : ping.error || 'Mất kết nối máy chủ local (http://localhost:8080)',
       }));
 
       // 2. Fetch Public Rooms from Local Backend
@@ -437,7 +437,7 @@ export function PatientHubScreen({ navigation }: Props) {
           <AppText style={styles.hospitalOrg}>BỆNH VIỆN ĐA KHOA TRUNG ƯƠNG</AppText>
           <AppText style={styles.hospitalAppTitle}>MediAssistRover · Tiếp đón</AppText>
 
-          {/* Connection Pill (Railway API vs Hybrid) */}
+          {/* Connection Pill (Local API vs Hybrid) */}
           <Pressable
             accessibilityRole="button"
             onPress={() => setShowApiConsole(!showApiConsole)}
