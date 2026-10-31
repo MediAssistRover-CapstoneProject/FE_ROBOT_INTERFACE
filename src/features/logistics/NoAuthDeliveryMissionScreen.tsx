@@ -29,7 +29,7 @@ export function NoAuthDeliveryMissionScreen() {
   const [closeCountdown, setCloseCountdown] = useState(29);
   const [isSearching, setIsSearching] = useState(false);
 
-  // Live Railway API Connection Status
+  // Live Local Backend API Connection Status
   const [apiStatus, setApiStatus] = useState<{
     connected: boolean;
     latencyMs: number;
