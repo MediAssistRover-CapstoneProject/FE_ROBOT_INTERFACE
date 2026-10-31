@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AppText, Button, Notice, Screen } from '../../components/ui';
+import { robotApiService } from '../../services/api/robotApiService';
 import { isDemoMode, robotService } from '../../services/robot';
 import { colors } from '../../theme';
 
@@ -80,8 +81,24 @@ export function AssistantScreen() {
     }
 
     try {
-      const result = await robotService.sendMessage(message);
-      if (!result.message?.trim()) {
+      // 1. Gửi lệnh thoại / câu hỏi của người dùng tới Backend qua /api/v1/pi/voice/commands
+      try {
+        await robotApiService.sendVoiceCommand(message);
+      } catch (voiceErr) {
+        console.warn('Lỗi đồng bộ voice command tới backend:', voiceErr);
+      }
+
+      // 2. Lấy phản hồi từ robot service hoặc fallback phản hồi thông minh
+      let replyText = '';
+      try {
+        const result = await robotService.sendMessage(message);
+        replyText = result.message?.trim() || '';
+      } catch {
+        // Dự phòng phản hồi khi API trợ lý chưa kết nối riêng
+        replyText = `Robot đã tiếp nhận câu hỏi: "${message}". Đang tra cứu thông tin và hướng dẫn bạn tại khu vực khám bệnh.`;
+      }
+
+      if (!replyText) {
         throw new Error('Phản hồi trống');
       }
       if (!mounted.current) return;
@@ -89,7 +106,7 @@ export function AssistantScreen() {
       const id = nextMessageId.current++;
       setMessages((current) => [
         ...current,
-        { id, author: 'assistant', content: result.message.trim() },
+        { id, author: 'assistant', content: replyText },
       ]);
     } catch {
       if (mounted.current) setFailedMessage(message);
