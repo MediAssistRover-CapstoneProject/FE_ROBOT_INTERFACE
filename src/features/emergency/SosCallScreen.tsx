@@ -224,7 +224,11 @@ export function SosCallScreen({ navigation }: Props) {
         <View style={styles.apiConsoleBox}>
           <View style={styles.apiConsoleHeader}>
             <Ionicons name="radio-outline" size={14} color="#EF4444" />
-            <AppText style={styles.apiConsoleTitle}>API INCIDENTS SOS TELEMETRY</AppText>
+            <AppText style={styles.apiConsoleTitle}>LOCAL API INCIDENTS SOS TELEMETRY</AppText>
+          </View>
+          <View style={styles.apiRow}>
+            <AppText style={styles.apiLabel}>MÁY CHỦ:</AppText>
+            <AppText style={styles.apiValue}>Local Backend (http://localhost:8080)</AppText>
           </View>
           <View style={styles.apiRow}>
             <AppText style={styles.apiLabel}>MÃ SỰ CỐ:</AppText>
