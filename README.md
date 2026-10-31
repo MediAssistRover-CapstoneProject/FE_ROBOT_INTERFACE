@@ -21,7 +21,8 @@ Nếu chuyển project sang máy khác, cài Node.js LTS rồi chạy `npm ci` t
 
 ### Phiên bản Expo Go
 
-Project sử dụng **Expo SDK 57**, React Native 0.86.3, React 19.2.3 tương thích trực tiếp với phiên bản Expo Go mới nhất trên iPhone.
+Project sử dụng **Expo SDK 58**, React Native 0.88.0, React 19.3.0 tương thích trực tiếp với phiên bản Expo Go mới nhất trên iPhone và Android.
+Kết nối trực tiếp đến **Backend Local** qua `http://localhost:8080` (Swagger UI: `http://localhost:8080/swagger-ui/index.html`).
 
 - [Hướng dẫn tương thích Expo Go](https://docs.expo.dev/troubleshooting/expo-go-version-mismatch/)
 - [Hướng dẫn chạy trên thiết bị](https://docs.expo.dev/get-started/start-developing/)

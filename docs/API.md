@@ -4,20 +4,20 @@
 
 ## Chế độ dữ liệu
 
-Mặc định ứng dụng dùng dữ liệu mẫu, không kết nối robot, không di chuyển robot và không gửi thông báo SOS cho nhân viên.
-
-```dotenv
-EXPO_PUBLIC_USE_MOCK=true
-EXPO_PUBLIC_ROBOT_API_URL=
-EXPO_PUBLIC_ROBOT_ID=MAR-01
-```
-
-Chỉ giá trị chính xác `EXPO_PUBLIC_USE_MOCK=false` mới bật API. Để phát triển với API trong mạng nội bộ, ví dụ:
+Mặc định ứng dụng kết nối trực tiếp đến **Backend Local** trên máy tính qua cổng `8080` (hoặc chuyển sang chế độ Hybrid Fallback khi database trống):
 
 ```dotenv
 EXPO_PUBLIC_USE_MOCK=false
-EXPO_PUBLIC_ROBOT_API_URL=http://192.168.1.10:8080/api/v1
-EXPO_PUBLIC_ROBOT_ID=MAR-01
+EXPO_PUBLIC_ROBOT_API_URL=http://localhost:8080
+EXPO_PUBLIC_ROBOT_CODE=ROBOT_MAR_01
+EXPO_PUBLIC_ROBOT_SECRET=6rGL6RPV9VgbVZfmcHXmA2uz-oST8speM1bO1eI1ozg
+EXPO_PUBLIC_ROBOT_ID=278e1751-36cd-4e24-bb1d-1c151b2396db
+```
+
+Để chuyển hoàn toàn sang dữ liệu mô phỏng không cần bật Docker Backend, đặt:
+
+```dotenv
+EXPO_PUBLIC_USE_MOCK=true
 ```
 
 Thay địa chỉ ví dụ bằng máy chủ thật. Điện thoại phải truy cập được địa chỉ này; `localhost` trên iPhone là chính điện thoại. Dùng HTTPS với chứng chỉ hợp lệ khi triển khai. Sau khi đổi biến môi trường, khởi động lại Expo.
