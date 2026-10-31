@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -17,85 +16,12 @@ import { colors } from '../../theme';
 import { robotApiService } from '../../services/api';
 import { API_BASE_URL, DEFAULT_ROBOT_CODE } from '../../services/api/config';
 import { RoomResponse } from '../../services/api/types';
+import { ClinicDestination, DEFAULT_HOSPITAL_ROOMS, DEFAULT_MAP_ID } from './types';
+import { QuickRoomSelector } from './components/QuickRoomSelector';
+import { VoiceSosActionRow } from './components/VoiceSosActionRow';
+import { EscortProgressBanner } from './components/EscortProgressBanner';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
-
-interface ClinicDestination {
-  id: string;
-  roomCode: string;
-  name: string;
-  category: 'clinic' | 'lab' | 'pharmacy' | 'service';
-  doctor: string;
-  location: string;
-  eta: string;
-  distance: string;
-}
-
-// Danh mục phòng khám bệnh viện mặc định (khi chưa có kết nối DB)
-const DEFAULT_HOSPITAL_ROOMS: ClinicDestination[] = [
-  {
-    id: 'room-capcuu',
-    roomCode: 'P_CAP_CUU',
-    name: 'Phòng Cấp cứu',
-    category: 'clinic',
-    doctor: 'BS. Trực cấp cứu',
-    location: 'Tầng 1 · Cấp cứu',
-    eta: '~1 phút',
-    distance: '~30m',
-  },
-  {
-    id: 'room-102',
-    roomCode: 'P_KHAM_NOI_01',
-    name: 'Khám Nội tổng hợp',
-    category: 'clinic',
-    doctor: 'BS. Nguyễn Thị Lan',
-    location: 'Tầng 1 · Phòng 102',
-    eta: '~2 phút',
-    distance: '~85m',
-  },
-  {
-    id: 'room-105',
-    roomCode: 'P_KHAM_NGOAI_02',
-    name: 'Khám Ngoại khoa',
-    category: 'clinic',
-    doctor: 'BS. Trần Văn Hùng',
-    location: 'Tầng 1 · Phòng 105',
-    eta: '~3 phút',
-    distance: '~120m',
-  },
-  {
-    id: 'room-pharm',
-    roomCode: 'P_NHA_THUOC',
-    name: 'Nhà thuốc Bệnh viện',
-    category: 'pharmacy',
-    doctor: 'Dược sĩ trực',
-    location: 'Tầng trệt · Quầy 1-4',
-    eta: '~1.5 phút',
-    distance: '~60m',
-  },
-  {
-    id: 'room-201',
-    roomCode: 'P_XET_NGHIEM',
-    name: 'Xét nghiệm máu',
-    category: 'lab',
-    doctor: 'KTV. Hoàng Minh Tuấn',
-    location: 'Tầng 2 · Khu B',
-    eta: '~4 phút',
-    distance: '~160m',
-  },
-  {
-    id: 'room-service',
-    roomCode: 'P_TIEP_DON',
-    name: 'Ban Tiếp đón & BHYT',
-    category: 'service',
-    doctor: 'Quầy tiếp đón số 1',
-    location: 'Sảnh chính',
-    eta: '~1 phút',
-    distance: '~40m',
-  },
-];
-
-const DEFAULT_MAP_ID = 'dee53b44-a8ef-446a-947e-c42aa14ce9c2';
 
 export function PatientHubScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -133,7 +59,6 @@ export function PatientHubScreen({ navigation }: Props) {
     let alive = true;
 
     async function initCatalogAndPing() {
-      // 1. Ping Server
       const ping = await robotApiService.pingServer();
       if (!alive) return;
 
@@ -143,7 +68,6 @@ export function PatientHubScreen({ navigation }: Props) {
         lastCall: ping.ok ? `200 OK (${ping.latencyMs}ms)` : 'Mất kết nối local',
       });
 
-      // 2. Tải danh mục phòng từ API /api/v1/public/rooms
       try {
         const roomsRes = await robotApiService.getPublicRooms(0, 50);
         if (alive && roomsRes && Array.isArray(roomsRes.content) && roomsRes.content.length > 0) {
@@ -205,7 +129,7 @@ export function PatientHubScreen({ navigation }: Props) {
       await robotApiService.sendHeartbeat('BUSY', 85, DEFAULT_MAP_ID);
       await robotApiService.sendLocation(14.2, 5.8, 0, DEFAULT_MAP_ID);
     } catch {
-      // Chạy tiếp tiến trình mô phỏng an toàn
+      // Chạy tiếp tiến trình an toàn
     } finally {
       setLoadingEscort(false);
       setIsEscorting(true);
@@ -248,18 +172,17 @@ export function PatientHubScreen({ navigation }: Props) {
   };
 
   // Trợ lý giọng nói (POST /api/v1/pi/voice/commands)
-  const handleQuickVoice = async (command = 'Chỉ đường đến ' + selectedRoom.name) => {
+  const handleVoicePress = async () => {
     setIsSendingVoice(true);
-    setVoiceFeedback(`Đang xử lý: "${command}"...`);
+    setVoiceFeedback(`Đang tra cứu trợ lý giọng nói...`);
 
     try {
-      await robotApiService.sendVoiceCommand(command);
+      await robotApiService.sendVoiceCommand('Chỉ đường đến ' + selectedRoom.name);
     } catch {
       // Ignored
     } finally {
       setIsSendingVoice(false);
-      setVoiceFeedback(`Robot: Đã hiểu lệnh tìm "${selectedRoom.name}"!`);
-      setTimeout(() => setVoiceFeedback(null), 3500);
+      navigation.navigate('Assistant');
     }
   };
 
@@ -320,7 +243,7 @@ export function PatientHubScreen({ navigation }: Props) {
         </View>
       </View>
 
-      {/* Mini Diagnostic Bar (Hiện khi chạm badge kết nối) */}
+      {/* Mini Diagnostic Bar */}
       {showApiConsole && (
         <View style={styles.miniConsole}>
           <AppText style={styles.miniConsoleText}>
@@ -336,7 +259,7 @@ export function PatientHubScreen({ navigation }: Props) {
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
-        {/* Voice Feedback Banner (Nếu vừa nhận diện giọng nói) */}
+        {/* Voice Feedback Banner */}
         {voiceFeedback && (
           <View style={styles.voiceFeedbackBanner}>
             <Ionicons name="mic-circle" size={18} color="#059669" />
@@ -344,53 +267,14 @@ export function PatientHubScreen({ navigation }: Props) {
           </View>
         )}
 
-        {/* 2. CHẾ ĐỘ DẪN ĐƯỜNG ĐANG HOẠT ĐỘNG (ESCORT PROGRESSION) */}
+        {/* 2. CHẾ ĐỘ DẪN ĐƯỜNG ĐANG HOẠT ĐỘNG */}
         {isEscorting ? (
-          <View style={styles.escortActiveCard}>
-            <View style={styles.escortHeaderRow}>
-              <View style={styles.escortPulseDot} />
-              <AppText style={styles.escortStatusTitle}>ROBOT ĐANG DẪN ĐƯỜNG</AppText>
-              <AppText style={styles.escortStepBadge}>Chặng {escortStep}/4</AppText>
-            </View>
-
-            <AppText style={styles.escortTargetName}>
-              Đích đến: {selectedRoom.name} ({selectedRoom.roomCode})
-            </AppText>
-            <AppText style={styles.escortGuideNote}>
-              Vui lòng bước theo sau robot với tốc độ vừa phải. Robot sẽ tự dừng nếu bạn tụt lại.
-            </AppText>
-
-            {/* Stepper Dots */}
-            <View style={styles.stepperRow}>
-              {['Sảnh', 'Hành lang', 'Chuyên khoa', 'Cửa phòng'].map((step, idx) => (
-                <View key={step} style={styles.stepItem}>
-                  <View
-                    style={[
-                      styles.stepCircle,
-                      idx + 1 <= escortStep ? styles.stepCircleActive : styles.stepCircleInactive,
-                    ]}
-                  >
-                    <Ionicons
-                      name={idx + 1 < escortStep ? 'checkmark' : 'navigate'}
-                      size={12}
-                      color="#FFFFFF"
-                    />
-                  </View>
-                  <AppText style={styles.stepLabel}>{step}</AppText>
-                </View>
-              ))}
-            </View>
-
-            {/* Nút Hủy / Dừng dẫn đường */}
-            <Pressable
-              accessibilityRole="button"
-              onPress={handleCancelEscort}
-              style={styles.btnStopEscort}
-            >
-              <Ionicons name="stop-circle-outline" size={20} color="#DC2626" />
-              <AppText style={styles.btnStopEscortText}>Dừng dẫn đường / Quay lại</AppText>
-            </Pressable>
-          </View>
+          <EscortProgressBanner
+            currentStep={escortStep}
+            roomName={selectedRoom.name}
+            roomCode={selectedRoom.roomCode}
+            onCancelEscort={handleCancelEscort}
+          />
         ) : (
           <>
             {/* 3. SƠ ĐỒ BẢN ĐỒ BỆNH VIỆN TRỰC QUAN (MAP) */}
@@ -406,7 +290,6 @@ export function PatientHubScreen({ navigation }: Props) {
                 </View>
               </View>
 
-              {/* Bản đồ Vector / Định vị thời gian thực */}
               <IndoorHospitalMap
                 targetRoom={selectedRoom.roomCode}
                 targetSubText={selectedRoom.name.split(' ')[0] || 'Phòng'}
@@ -414,125 +297,21 @@ export function PatientHubScreen({ navigation }: Props) {
             </View>
 
             {/* 4. CHỌN ĐIỂM ĐẾN NHANH (QUICK ROOM SELECTOR) */}
-            <View style={styles.roomSelectSection}>
-              <View style={styles.sectionHeaderRow}>
-                <View style={styles.sectionTitleLeft}>
-                  <Ionicons name="location-outline" size={16} color="#475569" />
-                  <AppText style={styles.sectionTitle}>CHỌN ĐIỂM ĐẾN</AppText>
-                </View>
-                <AppText style={styles.roomCountText}>{destinations.length} phòng</AppText>
-              </View>
+            <QuickRoomSelector
+              rooms={destinations}
+              selectedRoomId={selectedRoomId}
+              onSelectRoom={setSelectedRoomId}
+              onStartEscort={handleRequestEscort}
+              loadingEscort={loadingEscort}
+            />
 
-              {/* Danh sách phòng cuộn ngang nhỏ gọn */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.roomChipsRow}
-              >
-                {destinations.map((room) => {
-                  const isSelected = room.id === selectedRoomId;
-                  return (
-                    <Pressable
-                      key={room.id}
-                      accessibilityRole="button"
-                      onPress={() => setSelectedRoomId(room.id)}
-                      style={[styles.roomChip, isSelected && styles.roomChipSelected]}
-                    >
-                      <AppText
-                        style={[styles.roomChipCode, isSelected && styles.roomChipCodeSelected]}
-                      >
-                        {room.roomCode}
-                      </AppText>
-                      <AppText
-                        style={[styles.roomChipName, isSelected && styles.roomChipNameSelected]}
-                        numberOfLines={1}
-                      >
-                        {room.name}
-                      </AppText>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Thanh xác nhận điểm đến & Nút Dẫn đường */}
-              <View style={styles.destinationBar}>
-                <View style={styles.destInfoCol}>
-                  <AppText style={styles.destName} numberOfLines={1}>
-                    {selectedRoom.name}
-                  </AppText>
-                  <AppText style={styles.destMeta}>
-                    {selectedRoom.location} · {selectedRoom.distance} · {selectedRoom.eta}
-                  </AppText>
-                </View>
-
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleRequestEscort}
-                  disabled={loadingEscort}
-                  style={({ pressed }) => [
-                    styles.btnEscort,
-                    pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
-                  ]}
-                >
-                  {loadingEscort ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="walk" size={18} color="#FFFFFF" />
-                      <AppText style={styles.btnEscortText}>Dẫn đường</AppText>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-
-            {/* 5. BỘ ĐÔI TÁC VỤ CHÍNH: VOICE & SOS (NỔI BẬT, DỄ BẤM) */}
-            <View style={styles.actionRow}>
-              {/* Nút 1: Trợ lý Giọng nói (Voice) */}
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => navigation.navigate('Assistant')}
-                style={({ pressed }) => [
-                  styles.voiceButton,
-                  pressed && { opacity: 0.9, transform: [{ scale: 0.98 }] },
-                ]}
-              >
-                <View style={styles.voiceIconCircle}>
-                  {isSendingVoice ? (
-                    <ActivityIndicator size="small" color="#059669" />
-                  ) : (
-                    <Ionicons name="mic" size={22} color="#059669" />
-                  )}
-                </View>
-                <View style={styles.actionTextWrap}>
-                  <AppText style={styles.actionMainTitle}>Hỏi Trợ lý</AppText>
-                  <AppText style={styles.actionSubTitle}>Nói để tìm đường</AppText>
-                </View>
-              </Pressable>
-
-              {/* Nút 2: Cấp cứu Khẩn cấp (SOS) */}
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleEmergencySos}
-                disabled={isTriggeringSos}
-                style={({ pressed }) => [
-                  styles.sosButton,
-                  pressed && { backgroundColor: '#B91C1C', transform: [{ scale: 0.98 }] },
-                ]}
-              >
-                <View style={styles.sosIconCircle}>
-                  {isTriggeringSos ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
-                  ) : (
-                    <Ionicons name="megaphone" size={22} color="#DC2626" />
-                  )}
-                </View>
-                <View style={styles.actionTextWrap}>
-                  <AppText style={styles.sosMainTitle}>CẤP CỨU SOS</AppText>
-                  <AppText style={styles.sosSubTitle}>Gọi Điều dưỡng ngay</AppText>
-                </View>
-              </Pressable>
-            </View>
+            {/* 5. BỘ ĐÔI TÁC VỤ CHÍNH: VOICE & SOS */}
+            <VoiceSosActionRow
+              onPressVoice={handleVoicePress}
+              onPressSos={handleEmergencySos}
+              isSendingVoice={isSendingVoice}
+              isTriggeringSos={isTriggeringSos}
+            />
           </>
         )}
       </ScrollView>
@@ -642,7 +421,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 14,
     paddingTop: 10,
-    paddingBottom: 20,
+    paddingBottom: 70,
     gap: 10,
   },
   voiceFeedbackBanner: {
@@ -662,7 +441,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  // Map Section
   mapSection: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -705,270 +483,5 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#0284C7',
-  },
-  // Room Select Section
-  roomSelectSection: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
-  },
-  roomCountText: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  roomChipsRow: {
-    gap: 8,
-    paddingVertical: 2,
-  },
-  roomChip: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    minWidth: 95,
-  },
-  roomChipSelected: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#0284C7',
-    borderWidth: 1.5,
-  },
-  roomChipCode: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#334155',
-  },
-  roomChipCodeSelected: {
-    color: '#0284C7',
-  },
-  roomChipName: {
-    fontSize: 10,
-    color: '#64748B',
-    marginTop: 1,
-  },
-  roomChipNameSelected: {
-    color: '#0369A1',
-    fontWeight: '600',
-  },
-  // Destination Bar
-  destinationBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderRadius: 10,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: 8,
-  },
-  destInfoCol: {
-    flex: 1,
-  },
-  destName: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  destMeta: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  btnEscort: {
-    backgroundColor: '#0284C7',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    shadowColor: '#0284C7',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  btnEscortText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  // Action Buttons Row (Voice & SOS)
-  actionRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  voiceButton: {
-    flex: 1,
-    backgroundColor: '#047857',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    shadowColor: '#047857',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  voiceIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sosButton: {
-    flex: 1,
-    backgroundColor: '#DC2626',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    shadowColor: '#DC2626',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sosIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionTextWrap: {
-    flex: 1,
-  },
-  actionMainTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  actionSubTitle: {
-    color: '#D1FAE5',
-    fontSize: 10,
-    fontWeight: '500',
-    marginTop: 1,
-  },
-  sosMainTitle: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.2,
-  },
-  sosSubTitle: {
-    color: '#FEE2E2',
-    fontSize: 10,
-    fontWeight: '500',
-    marginTop: 1,
-  },
-  // Escort Active Card
-  escortActiveCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#38BDF8',
-  },
-  escortHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  escortPulseDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#10B981',
-  },
-  escortStatusTitle: {
-    flex: 1,
-    marginLeft: 8,
-    color: '#38BDF8',
-    fontSize: 13,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  escortStepBadge: {
-    color: '#E2E8F0',
-    fontSize: 11,
-    fontWeight: '700',
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-  },
-  escortTargetName: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  escortGuideNote: {
-    color: '#94A3B8',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  stepperRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  stepItem: {
-    alignItems: 'center',
-    gap: 4,
-    flex: 1,
-  },
-  stepCircle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepCircleActive: {
-    backgroundColor: '#0284C7',
-  },
-  stepCircleInactive: {
-    backgroundColor: '#334155',
-  },
-  stepLabel: {
-    color: '#94A3B8',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  btnStopEscort: {
-    backgroundColor: '#FEE2E2',
-    borderRadius: 10,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  btnStopEscortText: {
-    color: '#DC2626',
-    fontSize: 13,
-    fontWeight: '800',
   },
 });
