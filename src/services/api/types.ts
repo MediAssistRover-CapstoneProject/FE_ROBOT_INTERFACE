@@ -234,8 +234,13 @@ export interface EndpointResponse {
 }
 
 export interface HospitalInformationResponse {
-  id: string;
-  hospitalName: string;
+  id?: string;
+  hospitalInformationId?: string;
+  infoCategory?: string;
+  title?: string;
+  content?: string;
+  languageCode?: string;
+  hospitalName?: string;
   address?: string;
   hotline?: string;
 }

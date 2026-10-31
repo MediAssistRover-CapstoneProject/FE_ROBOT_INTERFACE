@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AppText, Notice, Screen } from '../../components/ui';
 import { colors } from '../../theme';
+import { robotApiService } from '../../services/api';
+import { HospitalInformationResponse } from '../../services/api/types';
 
 const steps = [
   {
@@ -37,6 +39,32 @@ const steps = [
 
 export function InformationScreen() {
   const [expanded, setExpanded] = useState<number | null>(0);
+  const [articles, setArticles] = useState<HospitalInformationResponse[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [isLiveApi, setIsLiveApi] = useState<boolean>(false);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    robotApiService
+      .getPublicHospitalInfo(0, 10)
+      .then((res) => {
+        if (alive && res && Array.isArray(res.content) && res.content.length > 0) {
+          setArticles(res.content);
+          setIsLiveApi(true);
+        }
+      })
+      .catch(() => {
+        // Fallback to static hospital outpatient guidelines smoothly
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
     <Screen>
@@ -48,7 +76,38 @@ export function InformationScreen() {
           </AppText>
         </View>
 
-        <Notice message="Đây là quy trình minh họa. Các bước thực tế có thể khác; vui lòng xác nhận với nhân viên bệnh viện." />
+        {isLiveApi ? (
+          <Notice message="Đang kết nối danh mục cẩm nang Bệnh viện từ Local Backend (localhost:8080)." />
+        ) : (
+          <Notice message="Đây là quy trình minh họa. Các bước thực tế có thể khác; vui lòng xác nhận với nhân viên bệnh viện." />
+        )}
+
+        {loading && <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 12 }} />}
+
+        {/* Live Articles Section if available from Backend */}
+        {articles.length > 0 && (
+          <View style={{ gap: 8 }}>
+            <AppText style={{ fontSize: 13, fontWeight: '700', color: '#0284C7' }}>
+              CẨM NANG & THÔNG TIN BỆNH VIỆN TRỰC TUYẾN
+            </AppText>
+            {articles.slice(0, 2).map((art, idx) => (
+              <View key={art.hospitalInformationId || idx} style={styles.articleCard}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Ionicons name="newspaper-outline" size={16} color={colors.primary} />
+                  <AppText style={{ fontSize: 14, fontWeight: '600', color: '#0369A1', flex: 1 }}>
+                    {art.title || 'Thông tin bệnh viện'}
+                  </AppText>
+                </View>
+                <AppText style={{ fontSize: 13, color: '#334155', lineHeight: 18 }} numberOfLines={3}>
+                  {art.content}
+                </AppText>
+              </View>
+            ))}
+            <AppText style={{ fontSize: 13, fontWeight: '700', color: '#0284C7', marginTop: 8 }}>
+              CÁC BƯỚC KHÁM BỆNH CHI TIẾT
+            </AppText>
+          </View>
+        )}
 
         <View style={styles.steps}>
           {steps.map((step, index) => {
@@ -127,6 +186,14 @@ const styles = StyleSheet.create({
   layout: { gap: 20 },
   heading: { gap: 6 },
   description: { color: colors.muted },
+  articleCard: {
+    backgroundColor: '#F0F9FF',
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+    borderRadius: 12,
+    padding: 12,
+    gap: 6,
+  },
   steps: { gap: 12 },
   stepCard: {
     backgroundColor: colors.surface,
