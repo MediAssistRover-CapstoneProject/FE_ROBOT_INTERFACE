@@ -2,18 +2,21 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 const getBackendBaseUrl = (): string => {
-  if (process.env.EXPO_PUBLIC_ROBOT_API_URL) {
-    return process.env.EXPO_PUBLIC_ROBOT_API_URL.replace(/\/+$/, '');
-  }
   if (Platform.OS === 'web') {
-    return 'http://localhost:8080';
+    return (process.env.EXPO_PUBLIC_ROBOT_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
   }
+
+  // Trên thiết bị thật (iPhone/Android qua Expo Go):
+  // Nếu url cấu hình là localhost, tự động thay bằng IP Wi-Fi máy tính từ hostUri để điện thoại gọi được máy tính
   const hostUri = Constants.expoConfig?.hostUri;
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip && ip.trim()) return `http://${ip}:8080`;
+  const lanIp = hostUri ? hostUri.split(':')[0] : '10.3.90.174';
+
+  const raw = process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() || 'http://localhost:8080';
+  if (raw.includes('localhost') || raw.includes('127.0.0.1')) {
+    return raw.replace('localhost', lanIp).replace('127.0.0.1', lanIp).replace(/\/+$/, '');
   }
-  return 'http://localhost:8080';
+
+  return raw.replace(/\/+$/, '');
 };
 
 export const API_BASE_URL = getBackendBaseUrl();
