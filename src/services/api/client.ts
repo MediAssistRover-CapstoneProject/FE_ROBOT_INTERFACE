@@ -32,9 +32,10 @@ class ApiClient {
     return this.robotId;
   }
 
-  public setToken(token: string, robotId?: string) {
+  public setToken(token: string, robotId?: string, expiresInMs = 3600 * 1000) {
     this.token = token;
     if (robotId) this.robotId = robotId;
+    this.tokenExpiresAt = Date.now() + expiresInMs;
   }
 
   /**
