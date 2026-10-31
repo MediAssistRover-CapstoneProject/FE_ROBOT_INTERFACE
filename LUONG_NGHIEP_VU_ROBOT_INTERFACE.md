@@ -250,6 +250,8 @@ Dành cho vật tư tiêu hao thông thường (băng gạc, tài liệu) và ki
 | **13**| `/api/v1/pi/job-steps/{id}/result` | `POST` | Device Token | `PiEnvelope<StepResultPayload>` | `{ receivedAt, stepStatus: "SUCCEEDED" }` |
 | **14**| `/api/v1/pi/job-steps/{id}/errors` | `POST` | Device Token | `PiEnvelope<StepErrorPayload>` | `{ receivedAt, retryable: true }` |
 | **15**| `/api/v1/pi/jobs/{id}/result` | `POST` | Device Token | `PiEnvelope<JobResultPayload>` | `{ receivedAt, jobStatus: "SUCCEEDED" }` |
+| **16**| `/api/v1/pi/voice/commands` | `POST` | Device Token | `PiEnvelope<{ command: string }>` | `{ receivedAt, status: "OK" }` |
+| **17**| `/api/v1/public/hospital-information` | `GET` | Không | `page=0&size=10` | `PageResponse<HospitalInformationResponse>` (7 bài viết) |
 
 ---
 
@@ -289,7 +291,7 @@ EXPO_PUBLIC_USE_MOCK=false
 ```powershell
 cd "D:\Robot app"
 npm run typecheck    # Kiểm tra kiểu TypeScript (0 lỗi)
-npm test             # Chạy 27 unit tests tự động (27/27 Passed)
+npm test             # Chạy 44 unit tests tự động (44/44 Passed)
 ```
 
 ### Bước 4: Khởi chạy Giao diện Expo Go
