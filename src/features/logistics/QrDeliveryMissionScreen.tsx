@@ -371,6 +371,10 @@ export function QrDeliveryMissionScreen() {
             </Pressable>
           </View>
           <View style={styles.apiConsoleRow}>
+            <AppText style={styles.apiConsoleLabel}>MÁY CHỦ:</AppText>
+            <AppText style={styles.apiConsoleVal}>Local Backend (http://localhost:8080)</AppText>
+          </View>
+          <View style={styles.apiConsoleRow}>
             <AppText style={styles.apiConsoleLabel}>MÃ NHIỆM VỤ:</AppText>
             <AppText style={styles.apiConsoleVal}>{JOB_ID}</AppText>
           </View>
