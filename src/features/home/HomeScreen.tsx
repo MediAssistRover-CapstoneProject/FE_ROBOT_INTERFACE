@@ -8,10 +8,11 @@ import { PatientHubScreen } from '../patient/PatientHubScreen';
 import { QrDeliveryMissionScreen } from '../logistics/QrDeliveryMissionScreen';
 import { FaceVerificationScreen } from '../logistics/FaceVerificationScreen';
 import { NoAuthDeliveryMissionScreen } from '../logistics/NoAuthDeliveryMissionScreen';
+import { HandoverWorkflowScreen } from '../logistics/HandoverWorkflowScreen';
 import { AppText } from '../../components/ui';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
-type AppTab = 'patient' | 'qrDelivery' | 'face' | 'noAuth';
+type AppTab = 'patient' | 'qrDelivery' | 'face' | 'noAuth' | 'handover';
 
 export function HomeScreen(props: Props) {
   const insets = useSafeAreaInsets();
@@ -25,6 +26,7 @@ export function HomeScreen(props: Props) {
         {activeTab === 'qrDelivery' && <QrDeliveryMissionScreen />}
         {activeTab === 'face' && <FaceVerificationScreen />}
         {activeTab === 'noAuth' && <NoAuthDeliveryMissionScreen />}
+        {activeTab === 'handover' && <HandoverWorkflowScreen />}
       </View>
 
       {/* Mode Switcher Navigation Dock (Floating Pill at Bottom) */}
@@ -111,6 +113,27 @@ export function HomeScreen(props: Props) {
               ]}
             >
               V/C Thường
+            </AppText>
+          </Pressable>
+
+          {/* Tab 5: Bàn giao & Đóng khoang */}
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setActiveTab('handover')}
+            style={[styles.dockTab, activeTab === 'handover' && styles.dockTabActive]}
+          >
+            <Ionicons
+              name={activeTab === 'handover' ? 'cube' : 'cube-outline'}
+              size={13}
+              color={activeTab === 'handover' ? '#FFFFFF' : '#94A3B8'}
+            />
+            <AppText
+              style={[
+                styles.dockLabel,
+                activeTab === 'handover' && styles.dockLabelActive,
+              ]}
+            >
+              Bàn giao
             </AppText>
           </Pressable>
         </View>
