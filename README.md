@@ -1,5 +1,7 @@
 # MediAssist Rover - Robot Touchscreen Interface (FE_ROBOT_INTERFACE)
 
+> **Delivery cập nhật 10/11/2026:** tablet hiển thị QR do BE cấp, Staff quét và xác nhận giao nhận theo từng bước. Xem [cách chạy bridge, hai app và nghiệm thu](docs/DELIVERY_INTEGRATION.md). Màn hình delivery chính đã thay demo bằng trạng thái BE; các mô tả delivery cũ bên dưới không phải hướng dẫn cho luồng mới.
+
 > **Giao diện Màn hình Cảm ứng (Touchscreen HMI)** gắn trực tiếp trên Robot Y tế Phục vụ Bệnh viện Thông minh **MediAssist Rover (MAR)**.  
 > **Phiên bản:** Expo SDK 58.0.0 · React Native 0.88.0 · React 19.3.0 · TypeScript 6.0 · Vitest · Kết nối Local Spring Boot Backend (Port 8080).
 
