@@ -22,6 +22,8 @@ import {
   FloorResponse,
   EndpointResponse,
   HospitalInformationResponse,
+  CameraVerifyRequest,
+  StaffQrScanWindow,
 } from './types';
 
 class RobotApiService {
@@ -329,6 +331,44 @@ class RobotApiService {
       `/api/v1/public/hospital-information?page=${page}&size=${size}`,
       { requiresAuth: false },
     );
+  }
+  /**
+   * 12. Staff Phone QR — Robot quét mã QR trên điện thoại nhân viên
+   *
+   * Staff mở app → gọi POST /api/v1/jobs/{jobId}/staff-phone-qr → hiện QR
+   * Robot mở camera quét → lấy proof → gọi endpoint dưới đây
+   * Server xác thực chữ ký → mở chốt tủ.
+   */
+  public async verifyStaffPhoneQr(
+    jobId: string,
+    body: CameraVerifyRequest,
+  ): Promise<void> {
+    await apiClient.request<void>(`/api/v1/pi/jobs/${jobId}/staff-phone-qr/verify`, {
+      method: 'POST',
+      body,
+    });
+  }
+
+  /**
+   * 13. Kiểm tra cửa sổ quét QR Staff — poll thay cho MQTT SERVER_HEARTBEAT
+   * Trả về null khi không có bước AUTHENTICATE đang active.
+   */
+  public async getStaffQrScanWindow(jobId: string): Promise<StaffQrScanWindow | null> {
+    try {
+      const challenge = await apiClient.request<{
+        challengeId?: string;
+        authJobStepId?: string;
+        expiresAt?: string;
+      }>(`/api/v1/pi/jobs/${jobId}/qr-challenge`);
+      if (!challenge || !challenge.authJobStepId) return null;
+      return {
+        jobId,
+        authJobStepId: challenge.authJobStepId,
+        expiresAt: challenge.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
+      };
+    } catch {
+      return null;
+    }
   }
 }
 

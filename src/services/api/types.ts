@@ -244,3 +244,24 @@ export interface HospitalInformationResponse {
   address?: string;
   hotline?: string;
 }
+
+/**
+ * Request body for POST /api/v1/pi/jobs/{jobId}/staff-phone-qr/verify
+ * Robot quét mã QR trên điện thoại Staff rồi gửi proof lên server.
+ */
+export interface CameraVerifyRequest {
+  authJobStepId: string;
+  transportSessionId: string;
+  /** Chuỗi `MARSTAFF1.{64-char-token}` đọc từ camera */
+  proof: string;
+}
+
+/**
+ * Cửa sổ quét QR Staff do server gửi qua SERVER_HEARTBEAT (MQTT)
+ * hoặc do client poll. Khi có trường này, robot biết cần mở camera quét.
+ */
+export interface StaffQrScanWindow {
+  jobId: string;
+  authJobStepId: string;
+  expiresAt: string;
+}
