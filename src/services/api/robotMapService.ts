@@ -5,6 +5,43 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
+import defaultPresentationData from './defaultPresentationMap.json';
+
+export interface PresentationPoint {
+  x: number;
+  y: number;
+}
+
+export interface PresentationFeature {
+  id: string;
+  type: 'ROOM' | 'WALL' | 'CORRIDOR' | 'DOOR' | 'LABEL' | 'LANDMARK' | string;
+  label?: string;
+  color?: string;
+  points: PresentationPoint[];
+  lineWidthM?: number;
+  fontSizeM?: number;
+  endpointId?: string | null;
+  roomId?: string | null;
+  roomCode?: string | null;
+  roomName?: string | null;
+  roomType?: string | null;
+  departmentCode?: string | null;
+  roomDescription?: string | null;
+  roomPublicVisible?: boolean | null;
+}
+
+export interface PresentationDocument {
+  schemaVersion?: number;
+  backgroundColor?: string;
+  rotationDegrees?: number;
+  features: PresentationFeature[];
+}
+
+export const DEFAULT_PRESENTATION_DOC: PresentationDocument = (
+  (defaultPresentationData as any).published ||
+  (defaultPresentationData as any).draft ||
+  defaultPresentationData
+) as PresentationDocument;
 
 export const REMOTE_API_BASE = 'https://mediassistrover.duckdns.org/api/v1';
 
@@ -249,6 +286,7 @@ class RobotMapService {
     let metadata: Record<string, any> = DEFAULT_MAP_METADATA;
     let zones: ZoneDto[] = DEFAULT_HOSPITAL_ZONES;
     let endpoints: EndpointResponse[] = DEFAULT_HOSPITAL_ENDPOINTS;
+    let presentation: PresentationDocument = DEFAULT_PRESENTATION_DOC;
 
     // 1. Lấy danh sách map từ backend
     try {
@@ -326,11 +364,26 @@ class RobotMapService {
       }
     } catch {}
 
+    // 5. Lấy Presentation Map (Sơ đồ CAD phòng và tường trực quan đồng bộ Web Admin)
+    try {
+      const presRes = await fetch(`${REMOTE_API_BASE}/maps/${activeMap.mapId}/presentation`, {
+        headers,
+      });
+      if (presRes.ok) {
+        const presData = await presRes.json();
+        const doc = presData?.published || presData?.draft;
+        if (doc && Array.isArray(doc.features) && doc.features.length > 0) {
+          presentation = doc;
+        }
+      }
+    } catch {}
+
     return {
       activeMap,
       metadata,
       zones,
       endpoints,
+      presentation,
       token,
     };
   }

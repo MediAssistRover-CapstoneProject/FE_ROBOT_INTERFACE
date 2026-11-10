@@ -29,6 +29,8 @@ import {
   DEFAULT_MAP_METADATA,
   DEFAULT_HOSPITAL_ZONES,
   DEFAULT_HOSPITAL_ENDPOINTS,
+  DEFAULT_PRESENTATION_DOC,
+  PresentationDocument,
 } from '../../services/api/robotMapService';
 import { ClinicDestination, DEFAULT_HOSPITAL_ROOMS, DEFAULT_MAP_ID } from './types';
 
@@ -42,11 +44,14 @@ export function PatientHubScreen({ navigation }: Props) {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
   }, []);
 
-  // 1. Dữ liệu Bản đồ Backend (Đồng bộ 100% với Staff App UI app)
+  // 1. Dữ liệu Bản đồ Backend (Đồng bộ 100% với Staff App UI app & Web Admin Presentation Map)
   const [activeMap, setActiveMap] = useState<MapResponse>(DEFAULT_HOSPITAL_MAP);
   const [mapMetadata, setMapMetadata] = useState<Record<string, any>>(DEFAULT_MAP_METADATA);
   const [zones, setZones] = useState<ZoneDto[]>(DEFAULT_HOSPITAL_ZONES);
   const [endpoints, setEndpoints] = useState<EndpointResponse[]>(DEFAULT_HOSPITAL_ENDPOINTS);
+  const [presentationDoc, setPresentationDoc] = useState<PresentationDocument | null>(
+    DEFAULT_PRESENTATION_DOC
+  );
   const [authToken, setAuthToken] = useState<string | null>(null);
 
   // 2. Tọa độ Robot AMR thời gian thực (Nav2 Telemetry)
@@ -93,6 +98,9 @@ export function PatientHubScreen({ navigation }: Props) {
         setMapMetadata(pkg.metadata);
         setZones(pkg.zones);
         setEndpoints(pkg.endpoints);
+        if (pkg.presentation) {
+          setPresentationDoc(pkg.presentation);
+        }
         setAuthToken(pkg.token);
       } catch (err) {
         console.warn('Lỗi khi tải map backend:', err);
@@ -281,10 +289,15 @@ export function PatientHubScreen({ navigation }: Props) {
     }
   };
 
-  // Khi bấm trực tiếp vào một Endpoint trên bản đồ
+  // Khi bấm trực tiếp vào một Endpoint hoặc Room trên bản đồ
   const handleSelectEndpoint = (ep: EndpointResponse) => {
+    const epCode = (ep.endpointCode || '').toUpperCase();
     const match = destinations.find(
-      (d) => d.roomCode.toUpperCase() === ep.endpointCode.toUpperCase()
+      (d) =>
+        d.roomCode.toUpperCase() === epCode ||
+        d.id === ep.endpointId ||
+        d.id === `room-${epCode.toLowerCase()}` ||
+        (ep.endpointName && d.name.toLowerCase().includes(ep.endpointName.toLowerCase()))
     );
     if (match) {
       setSelectedRoomId(match.id);
@@ -346,6 +359,7 @@ export function PatientHubScreen({ navigation }: Props) {
             metadata={mapMetadata}
             endpoints={endpoints}
             zones={zones}
+            presentation={presentationDoc}
             token={authToken}
             selectedEndpointId={selectedRoom.roomCode}
             onSelectEndpoint={handleSelectEndpoint}
@@ -490,7 +504,7 @@ export function PatientHubScreen({ navigation }: Props) {
           <View style={styles.quickRoomsSection}>
             <AppText style={styles.quickRoomsLabel}>CHỌN NHANH ĐIỂM ĐẾN</AppText>
             <View style={styles.quickRoomsRow}>
-              {destinations.slice(0, 6).map((item) => {
+              {destinations.map((item) => {
                 const isSelected = item.id === selectedRoomId;
                 return (
                   <Pressable

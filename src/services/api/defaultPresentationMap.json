@@ -1,0 +1,2549 @@
+{
+  "source": {
+    "mapId": "e571fe71-d3ea-4aa5-a673-ffd857ac9f09",
+    "assetHash": "a7602f50dc916b960490cf2403c40bf939156eaf54146cf303161002f3412079",
+    "widthM": 5.775000086054206,
+    "heightM": 4.700000070035458,
+    "resolutionMPerPixel": 0.02500000037252903,
+    "originXM": -3.4252419095798285,
+    "originYM": -1.4668138059004279,
+    "originYawRad": 0,
+    "frameId": "map",
+    "widthPx": 231,
+    "heightPx": 188
+  },
+  "revision": 27,
+  "draft": {
+    "schemaVersion": 1,
+    "backgroundColor": "#f8fafc",
+    "features": [
+      {
+        "id": "b8df971c-1e7e-49cb-bed3-7d7b01c1abd8",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.0266445961129478,
+            "y": 4.682245144978889
+          },
+          {
+            "x": 5.754366504198588,
+            "y": 3.049386758772727
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "88f0cd71-c158-4027-9b11-0bf3b235ee95",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.754366504198588,
+            "y": 3.049386758772727
+          },
+          {
+            "x": 4.724584326467624,
+            "y": 0.04555903637855163
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "8e59ab40-e09d-4946-9588-0f37239357f4",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.724584326467624,
+            "y": 0.04555903637855163
+          },
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "51cbc4fc-0f7f-42e0-9999-e454eca47d3d",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          },
+          {
+            "x": 1.0266445961129478,
+            "y": 4.682245144978889
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "4c55189b-ae0a-4a88-bdf1-c2fa2478bace",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.698695298649648,
+            "y": 4.450132586980075
+          },
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766673
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "7c02586b-b2ed-4786-9551-d3a1a53c5a31",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766673
+          },
+          {
+            "x": 1.9537199672813368,
+            "y": 4.004548732404159
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "fe5e0246-b227-4a9b-abf5-2bf30356d43b",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.249596036812312,
+            "y": 3.897443090449539
+          },
+          {
+            "x": 2.624387545792334,
+            "y": 3.761770458215104
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "58b45f19-4e49-471a-868f-cab8b28f1c3c",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.624387545792334,
+            "y": 3.761770458215104
+          },
+          {
+            "x": 2.7166128817929027,
+            "y": 4.098564687172026
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "71688650-7250-4b9b-91a6-16f51915e7ce",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.744850976033336,
+            "y": 3.743432294057773
+          },
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "7eb15f0a-6639-4fc4-a1b1-eea99b494c99",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          },
+          {
+            "x": 2.947188862203445,
+            "y": 3.644918012957143
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "a8dcaded-ff17-4efe-b114-9b55762b654e",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.947188862203445,
+            "y": 3.644918012957143
+          },
+          {
+            "x": 4.2957543729803485,
+            "y": 3.156744113058492
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "db1465d6-4145-494f-87a6-d50c84d5b35c",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.62379076884204,
+            "y": 3.037996595495001
+          },
+          {
+            "x": 4.76256795912761,
+            "y": 3.391933677401022
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "099045f7-93ce-414e-880a-5405c0f3f3f1",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.027458369466219,
+            "y": 0.29025016697598804
+          },
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "81d848c9-c269-4e23-b8d8-1a228958b426",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          },
+          {
+            "x": 3.5832587804807448,
+            "y": 0.8153356077488416
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "6370d6b8-3cf4-484d-bed8-de352d6ba76a",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.0313851875667845,
+            "y": 0.6398717390734197
+          },
+          {
+            "x": 3.151482351876833,
+            "y": 0.971636492912702
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2679ae27-0478-4a09-b37f-5b8d28cacac6",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.151482351876833,
+            "y": 0.971636492912702
+          },
+          {
+            "x": 2.5230900103357468,
+            "y": 1.199111344957399
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "c239fbf7-0d4f-4268-a245-a9bbe63b9a08",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.1217923358541204,
+            "y": 1.7063740216341232
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "9d43b090-e9f6-468c-90c2-a44ec09d4799",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.1217923358541204,
+            "y": 1.7063740216341232
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2c85f103-09c5-463b-9a9c-0ca5ab2e6ffc",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.6969450409795981,
+            "y": 1.4592599615941757
+          },
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "4cf5d271-581f-48ac-85a2-9e62fd96910e",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          },
+          {
+            "x": 0.6305017307495655,
+            "y": 2.274215190423907
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "75264017-9599-492d-9a8c-26035986c3cb",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          },
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "1ffed852-6a86-4121-95ec-427e9c545f40",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          },
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "f5d9fee8-465d-4dd1-8ceb-18838dc550b0",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          },
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "15461677-16ab-479b-aabb-2aece2bf9919",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          },
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "29f63fcc-e890-421a-b9f4-417e455338fe",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.394548879844237,
+            "y": 2.303212810810434
+          },
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "83dfc67a-b42a-4e7d-ab84-7d2109306dee",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          },
+          {
+            "x": 4.214281338785907,
+            "y": 2.3308797241002046
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "e5e1ae20-57a5-4c85-abfe-b2d4ea142364",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.214281338785907,
+            "y": 2.3308797241002046
+          },
+          {
+            "x": 3.966756131729233,
+            "y": 1.647098888308201
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "93fc921c-b5c5-4c0d-81a9-2d7be1e57198",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.966756131729233,
+            "y": 1.647098888308201
+          },
+          {
+            "x": 3.250851361054349,
+            "y": 1.9062527974535344
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "bf0553e5-3e53-466c-b96a-8b64d6909e10",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.4971565355857996,
+            "y": 2.9524702253343524
+          },
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2ad3c017-b77c-4380-acdd-f665327e7b60",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          },
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "c6de962c-ac4c-4bb8-805d-175b9c1475c6",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          },
+          {
+            "x": 2.288857914551633,
+            "y": 2.254489563634533
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "5d54e481-1523-4921-849d-b8ea2c695aa4",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.4053904004898676,
+            "y": 2.576407002182608
+          },
+          {
+            "x": 2.288857914551633,
+            "y": 2.254489563634533
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "e7177f6d-5408-4c1d-9f88-e6c317f77216",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          },
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "d483f150-91a7-4408-8dae-6c14131f5911",
+        "type": "ROOM",
+        "label": "WC",
+        "color": "#3b82f6",
+        "points": [
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          },
+          {
+            "x": 0.6969450409795979,
+            "y": 1.4592599615941757
+          },
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          },
+          {
+            "x": 0.25813425524421924,
+            "y": 2.4017984288413285
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.09,
+        "endpointId": "a5185658-b5db-4d60-85c0-38c65204fe7c",
+        "roomId": "dece7fe0-25f4-4772-ae75-b1fafa8d4634",
+        "roomCode": "ROOM_WC",
+        "roomName": "WC",
+        "roomType": "OTHER",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "ebb93bb8-461d-4ddf-97ab-3f5f65058cd9",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.2262305939138949,
+            "y": 3.9198980071507656
+          },
+          {
+            "x": 0.8112529117935725,
+            "y": 4.043100512735929
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "be22422d-5155-4662-b2ce-f3ee40e9ac55",
+        "type": "ROOM",
+        "label": "Phòng 03",
+        "color": "#0d9488",
+        "points": [
+          {
+            "x": 0.7014907942413412,
+            "y": 1.4718174663492665
+          },
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          },
+          {
+            "x": 0.8293851114576314,
+            "y": 1.825121617304606
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "755370df-de88-48ba-9c94-65163f75adf0",
+        "roomId": "1a3749d0-3ec0-486a-a709-a39f5a6c1ef4",
+        "roomCode": "ROOM_03",
+        "roomName": "Phòng 03",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "711f7a1b-7c98-46ab-86cd-a5237df592e1",
+        "type": "ROOM",
+        "label": "Phòng 02",
+        "color": "#d97706",
+        "points": [
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          },
+          {
+            "x": 3.027715992693663,
+            "y": 0.6297357001347592
+          },
+          {
+            "x": 3.1514823518768327,
+            "y": 0.971636492912702
+          },
+          {
+            "x": 2.1124771832791938,
+            "y": 1.3477511133117952
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "9601325c-037f-443f-89c4-5e43ee69878f",
+        "roomId": "c42a3ffa-4e39-498c-9a6a-d7412a9df5f8",
+        "roomCode": "ROOM_02",
+        "roomName": "Phòng 02",
+        "roomType": "GENERAL",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "1ce620b4-01a7-4caa-a6e3-3c666a9551ca",
+        "type": "ROOM",
+        "label": "Phòng 01",
+        "color": "#8b5cf6",
+        "points": [
+          {
+            "x": 3.034890391818774,
+            "y": 0.6495547589223776
+          },
+          {
+            "x": 4.027458369466219,
+            "y": 0.29025016697598804
+          },
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          },
+          {
+            "x": 3.1514823518768327,
+            "y": 0.971636492912702
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "049204b7-cd5c-41b8-af99-1cd2797d796c",
+        "roomId": "38b58ca2-1681-40fa-a6f4-af93cf10cbd2",
+        "roomCode": "ROOM_01",
+        "roomName": "Phòng 01",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "6df58ecc-2f3b-4018-9761-9b16a67aa2ee",
+        "type": "ROOM",
+        "label": "kho",
+        "color": "#e11d48",
+        "points": [
+          {
+            "x": 0.805775379539013,
+            "y": 4.072100669975699
+          },
+          {
+            "x": 1.4742522215702143,
+            "y": 3.8301154313213983
+          },
+          {
+            "x": 1.6951214381441493,
+            "y": 4.44025990632459
+          },
+          {
+            "x": 1.026644596112948,
+            "y": 4.682245144978889
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "b99fdb64-30ca-45a4-b2ef-3ed8c3173254",
+        "roomId": "64f0bb3a-56db-46e2-a077-e7b7a1671c3b",
+        "roomCode": "ROOM_KHO",
+        "roomName": "kho",
+        "roomType": "OTHER",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "40a71a34-4488-4565-a630-1f8e50bb0299",
+        "type": "ROOM",
+        "label": "Phòng 04",
+        "color": "#0891b2",
+        "points": [
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766674
+          },
+          {
+            "x": 2.6243875457923345,
+            "y": 3.761770458215104
+          },
+          {
+            "x": 2.733878250104773,
+            "y": 4.0642351897730205
+          },
+          {
+            "x": 1.6951214381441493,
+            "y": 4.44025990632459
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "61768589-0667-4072-b2ea-3007605c2c35",
+        "roomId": "50634875-f915-4176-b8d7-01bcec1a0a59",
+        "roomCode": "ROOM_04",
+        "roomName": "Phòng 04",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "0d881624-830e-46e2-b8f9-3853d8d140c7",
+        "type": "ROOM",
+        "label": "Phòng 05",
+        "color": "#8b5cf6",
+        "points": [
+          {
+            "x": 2.5981351905032333,
+            "y": 3.771273678162959
+          },
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          },
+          {
+            "x": 3.739382966698052,
+            "y": 3.7283270850252954
+          },
+          {
+            "x": 2.7166128817929023,
+            "y": 4.098564687172026
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "17f3bde7-13fa-4d7b-b9e2-0775e9031bcd",
+        "roomId": "3a5430fc-4cc9-4378-993c-935c4c9a911c",
+        "roomCode": "ROOM_05",
+        "roomName": "Phòng 05",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "6fcd2df8-3390-4975-8009-3753d8a82466",
+        "type": "ROOM",
+        "label": "Phòng 06",
+        "color": "#3b82f6",
+        "points": [
+          {
+            "x": 3.620905275408384,
+            "y": 3.4010360760162293
+          },
+          {
+            "x": 4.62379076884204,
+            "y": 3.0379965954950015
+          },
+          {
+            "x": 4.742268460131709,
+            "y": 3.3652876045040676
+          },
+          {
+            "x": 3.739382966698052,
+            "y": 3.7283270850252954
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "12923b22-c6c6-4ed7-9fbf-155d41a5987b",
+        "roomId": "8b1f0980-001b-42bc-bafe-1ddb19ee0c5c",
+        "roomCode": "ROOM_06",
+        "roomName": "Phòng 06",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "170635a6-b643-435d-b897-98cb6cb093cc",
+        "type": "ROOM",
+        "label": "Phòng 08",
+        "color": "#e11d48",
+        "points": [
+          {
+            "x": 3.250851361054349,
+            "y": 1.9062527974535344
+          },
+          {
+            "x": 3.9667561317292326,
+            "y": 1.6470988883082005
+          },
+          {
+            "x": 4.214281338785907,
+            "y": 2.330879724100204
+          },
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "c8c111a3-d97f-4677-adc8-d8211c07ecb5",
+        "roomId": "111024e8-0a7b-44d0-8dd7-220e73da1526",
+        "roomCode": "ROOM_08",
+        "roomName": "Phòng 08",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "144ad2ba-bd22-499d-bdce-5c9a8d4a1071",
+        "type": "ROOM",
+        "label": "Phòng 09",
+        "color": "#d97706",
+        "points": [
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          },
+          {
+            "x": 2.2888579145516323,
+            "y": 2.254489563634533
+          },
+          {
+            "x": 2.536383121608306,
+            "y": 2.9382703994265364
+          },
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "05516d49-8850-481f-aec2-4b9c471afad1",
+        "roomId": "c115706a-c9b6-42bc-b487-a8e54ec9e66e",
+        "roomCode": "ROOM_09",
+        "roomName": "Phòng 09",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "8147f3d3-6a2c-48e8-a6e5-90585c173c24",
+        "type": "ROOM",
+        "label": "LT",
+        "color": "#0d9488",
+        "points": [
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          },
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          },
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          },
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "3f599409-70a9-4ca3-a0df-ca5bcf1bfcde",
+        "roomId": "e91990ae-4b9f-4b71-a54d-92743d47d52c",
+        "roomCode": "ROOM_LT",
+        "roomName": "LT",
+        "roomType": "WAITING_AREA",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      }
+    ],
+    "rotationDegrees": -19.9
+  },
+  "published": {
+    "schemaVersion": 1,
+    "backgroundColor": "#f8fafc",
+    "features": [
+      {
+        "id": "b8df971c-1e7e-49cb-bed3-7d7b01c1abd8",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.0266445961129478,
+            "y": 4.682245144978889
+          },
+          {
+            "x": 5.754366504198588,
+            "y": 3.049386758772727
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "88f0cd71-c158-4027-9b11-0bf3b235ee95",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.754366504198588,
+            "y": 3.049386758772727
+          },
+          {
+            "x": 4.724584326467624,
+            "y": 0.04555903637855163
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "8e59ab40-e09d-4946-9588-0f37239357f4",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.724584326467624,
+            "y": 0.04555903637855163
+          },
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "51cbc4fc-0f7f-42e0-9999-e454eca47d3d",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          },
+          {
+            "x": 1.0266445961129478,
+            "y": 4.682245144978889
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "4c55189b-ae0a-4a88-bdf1-c2fa2478bace",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.698695298649648,
+            "y": 4.450132586980075
+          },
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766673
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "7c02586b-b2ed-4786-9551-d3a1a53c5a31",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766673
+          },
+          {
+            "x": 1.9537199672813368,
+            "y": 4.004548732404159
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "fe5e0246-b227-4a9b-abf5-2bf30356d43b",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.249596036812312,
+            "y": 3.897443090449539
+          },
+          {
+            "x": 2.624387545792334,
+            "y": 3.761770458215104
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "58b45f19-4e49-471a-868f-cab8b28f1c3c",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.624387545792334,
+            "y": 3.761770458215104
+          },
+          {
+            "x": 2.7166128817929027,
+            "y": 4.098564687172026
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "71688650-7250-4b9b-91a6-16f51915e7ce",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.744850976033336,
+            "y": 3.743432294057773
+          },
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "7eb15f0a-6639-4fc4-a1b1-eea99b494c99",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          },
+          {
+            "x": 2.947188862203445,
+            "y": 3.644918012957143
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "a8dcaded-ff17-4efe-b114-9b55762b654e",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.947188862203445,
+            "y": 3.644918012957143
+          },
+          {
+            "x": 4.2957543729803485,
+            "y": 3.156744113058492
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "db1465d6-4145-494f-87a6-d50c84d5b35c",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.62379076884204,
+            "y": 3.037996595495001
+          },
+          {
+            "x": 4.76256795912761,
+            "y": 3.391933677401022
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "099045f7-93ce-414e-880a-5405c0f3f3f1",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.027458369466219,
+            "y": 0.29025016697598804
+          },
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "81d848c9-c269-4e23-b8d8-1a228958b426",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          },
+          {
+            "x": 3.5832587804807448,
+            "y": 0.8153356077488416
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "6370d6b8-3cf4-484d-bed8-de352d6ba76a",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.0313851875667845,
+            "y": 0.6398717390734197
+          },
+          {
+            "x": 3.151482351876833,
+            "y": 0.971636492912702
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2679ae27-0478-4a09-b37f-5b8d28cacac6",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.151482351876833,
+            "y": 0.971636492912702
+          },
+          {
+            "x": 2.5230900103357468,
+            "y": 1.199111344957399
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "c239fbf7-0d4f-4268-a245-a9bbe63b9a08",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.1217923358541204,
+            "y": 1.7063740216341232
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "9d43b090-e9f6-468c-90c2-a44ec09d4799",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.1217923358541204,
+            "y": 1.7063740216341232
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2c85f103-09c5-463b-9a9c-0ca5ab2e6ffc",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.6969450409795981,
+            "y": 1.4592599615941757
+          },
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "4cf5d271-581f-48ac-85a2-9e62fd96910e",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          },
+          {
+            "x": 0.6305017307495655,
+            "y": 2.274215190423907
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "75264017-9599-492d-9a8c-26035986c3cb",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          },
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "1ffed852-6a86-4121-95ec-427e9c545f40",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          },
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "f5d9fee8-465d-4dd1-8ceb-18838dc550b0",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          },
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "15461677-16ab-479b-aabb-2aece2bf9919",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          },
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "29f63fcc-e890-421a-b9f4-417e455338fe",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.394548879844237,
+            "y": 2.303212810810434
+          },
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "83dfc67a-b42a-4e7d-ab84-7d2109306dee",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          },
+          {
+            "x": 4.214281338785907,
+            "y": 2.3308797241002046
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "e5e1ae20-57a5-4c85-abfe-b2d4ea142364",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 4.214281338785907,
+            "y": 2.3308797241002046
+          },
+          {
+            "x": 3.966756131729233,
+            "y": 1.647098888308201
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "93fc921c-b5c5-4c0d-81a9-2d7be1e57198",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 3.966756131729233,
+            "y": 1.647098888308201
+          },
+          {
+            "x": 3.250851361054349,
+            "y": 1.9062527974535344
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "bf0553e5-3e53-466c-b96a-8b64d6909e10",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.4971565355857996,
+            "y": 2.9524702253343524
+          },
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "2ad3c017-b77c-4380-acdd-f665327e7b60",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          },
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "c6de962c-ac4c-4bb8-805d-175b9c1475c6",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          },
+          {
+            "x": 2.288857914551633,
+            "y": 2.254489563634533
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "5d54e481-1523-4921-849d-b8ea2c695aa4",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.4053904004898676,
+            "y": 2.576407002182608
+          },
+          {
+            "x": 2.288857914551633,
+            "y": 2.254489563634533
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "e7177f6d-5408-4c1d-9f88-e6c317f77216",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          },
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "d483f150-91a7-4408-8dae-6c14131f5911",
+        "type": "ROOM",
+        "label": "WC",
+        "color": "#3b82f6",
+        "points": [
+          {
+            "x": 0.020512056552968172,
+            "y": 1.6966878612017302
+          },
+          {
+            "x": 0.6969450409795979,
+            "y": 1.4592599615941757
+          },
+          {
+            "x": 0.9500774094259016,
+            "y": 2.158530409725112
+          },
+          {
+            "x": 0.25813425524421924,
+            "y": 2.4017984288413285
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.09,
+        "endpointId": "a5185658-b5db-4d60-85c0-38c65204fe7c",
+        "roomId": "dece7fe0-25f4-4772-ae75-b1fafa8d4634",
+        "roomCode": "ROOM_WC",
+        "roomName": "WC",
+        "roomType": "OTHER",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "ebb93bb8-461d-4ddf-97ab-3f5f65058cd9",
+        "type": "WALL",
+        "label": "",
+        "color": "#334155",
+        "points": [
+          {
+            "x": 1.2262305939138949,
+            "y": 3.9198980071507656
+          },
+          {
+            "x": 0.8112529117935725,
+            "y": 4.043100512735929
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": null,
+        "roomId": null,
+        "roomCode": null,
+        "roomName": null,
+        "roomType": null,
+        "departmentCode": null,
+        "roomDescription": null,
+        "roomPublicVisible": null
+      },
+      {
+        "id": "be22422d-5155-4662-b2ce-f3ee40e9ac55",
+        "type": "ROOM",
+        "label": "Phòng 03",
+        "color": "#0d9488",
+        "points": [
+          {
+            "x": 0.7014907942413412,
+            "y": 1.4718174663492665
+          },
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          },
+          {
+            "x": 2.1152612307762286,
+            "y": 1.3467433021871082
+          },
+          {
+            "x": 0.8293851114576314,
+            "y": 1.825121617304606
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "755370df-de88-48ba-9c94-65163f75adf0",
+        "roomId": "1a3749d0-3ec0-486a-a709-a39f5a6c1ef4",
+        "roomCode": "ROOM_03",
+        "roomName": "Phòng 03",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "711f7a1b-7c98-46ab-86cd-a5237df592e1",
+        "type": "ROOM",
+        "label": "Phòng 02",
+        "color": "#d97706",
+        "points": [
+          {
+            "x": 1.9887108240960245,
+            "y": 1.0058503205338534
+          },
+          {
+            "x": 3.027715992693663,
+            "y": 0.6297357001347592
+          },
+          {
+            "x": 3.1514823518768327,
+            "y": 0.971636492912702
+          },
+          {
+            "x": 2.1124771832791938,
+            "y": 1.3477511133117952
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "9601325c-037f-443f-89c4-5e43ee69878f",
+        "roomId": "c42a3ffa-4e39-498c-9a6a-d7412a9df5f8",
+        "roomCode": "ROOM_02",
+        "roomName": "Phòng 02",
+        "roomType": "GENERAL",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "1ce620b4-01a7-4caa-a6e3-3c666a9551ca",
+        "type": "ROOM",
+        "label": "Phòng 01",
+        "color": "#8b5cf6",
+        "points": [
+          {
+            "x": 3.034890391818774,
+            "y": 0.6495547589223776
+          },
+          {
+            "x": 4.027458369466219,
+            "y": 0.29025016697598804
+          },
+          {
+            "x": 4.144050329524277,
+            "y": 0.6123319009663115
+          },
+          {
+            "x": 3.1514823518768327,
+            "y": 0.971636492912702
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "049204b7-cd5c-41b8-af99-1cd2797d796c",
+        "roomId": "38b58ca2-1681-40fa-a6f4-af93cf10cbd2",
+        "roomCode": "ROOM_01",
+        "roomName": "Phòng 01",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "6df58ecc-2f3b-4018-9761-9b16a67aa2ee",
+        "type": "ROOM",
+        "label": "kho",
+        "color": "#e11d48",
+        "points": [
+          {
+            "x": 0.805775379539013,
+            "y": 4.072100669975699
+          },
+          {
+            "x": 1.4742522215702143,
+            "y": 3.8301154313213983
+          },
+          {
+            "x": 1.6951214381441493,
+            "y": 4.44025990632459
+          },
+          {
+            "x": 1.026644596112948,
+            "y": 4.682245144978889
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "b99fdb64-30ca-45a4-b2ef-3ed8c3173254",
+        "roomId": "64f0bb3a-56db-46e2-a077-e7b7a1671c3b",
+        "roomCode": "ROOM_KHO",
+        "roomName": "kho",
+        "roomType": "OTHER",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "40a71a34-4488-4565-a630-1f8e50bb0299",
+        "type": "ROOM",
+        "label": "Phòng 04",
+        "color": "#0891b2",
+        "points": [
+          {
+            "x": 1.5856307338317106,
+            "y": 4.137795174766674
+          },
+          {
+            "x": 2.6243875457923345,
+            "y": 3.761770458215104
+          },
+          {
+            "x": 2.733878250104773,
+            "y": 4.0642351897730205
+          },
+          {
+            "x": 1.6951214381441493,
+            "y": 4.44025990632459
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "61768589-0667-4072-b2ea-3007605c2c35",
+        "roomId": "50634875-f915-4176-b8d7-01bcec1a0a59",
+        "roomCode": "ROOM_04",
+        "roomName": "Phòng 04",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "0d881624-830e-46e2-b8f9-3853d8d140c7",
+        "type": "ROOM",
+        "label": "Phòng 05",
+        "color": "#8b5cf6",
+        "points": [
+          {
+            "x": 2.5981351905032333,
+            "y": 3.771273678162959
+          },
+          {
+            "x": 3.6209052754083833,
+            "y": 3.4010360760162284
+          },
+          {
+            "x": 3.739382966698052,
+            "y": 3.7283270850252954
+          },
+          {
+            "x": 2.7166128817929023,
+            "y": 4.098564687172026
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "17f3bde7-13fa-4d7b-b9e2-0775e9031bcd",
+        "roomId": "3a5430fc-4cc9-4378-993c-935c4c9a911c",
+        "roomCode": "ROOM_05",
+        "roomName": "Phòng 05",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "6fcd2df8-3390-4975-8009-3753d8a82466",
+        "type": "ROOM",
+        "label": "Phòng 06",
+        "color": "#3b82f6",
+        "points": [
+          {
+            "x": 3.620905275408384,
+            "y": 3.4010360760162293
+          },
+          {
+            "x": 4.62379076884204,
+            "y": 3.0379965954950015
+          },
+          {
+            "x": 4.742268460131709,
+            "y": 3.3652876045040676
+          },
+          {
+            "x": 3.739382966698052,
+            "y": 3.7283270850252954
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "12923b22-c6c6-4ed7-9fbf-155d41a5987b",
+        "roomId": "8b1f0980-001b-42bc-bafe-1ddb19ee0c5c",
+        "roomCode": "ROOM_06",
+        "roomName": "Phòng 06",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "170635a6-b643-435d-b897-98cb6cb093cc",
+        "type": "ROOM",
+        "label": "Phòng 08",
+        "color": "#e11d48",
+        "points": [
+          {
+            "x": 3.250851361054349,
+            "y": 1.9062527974535344
+          },
+          {
+            "x": 3.9667561317292326,
+            "y": 1.6470988883082005
+          },
+          {
+            "x": 4.214281338785907,
+            "y": 2.330879724100204
+          },
+          {
+            "x": 3.4983765681110226,
+            "y": 2.590033633245538
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "c8c111a3-d97f-4677-adc8-d8211c07ecb5",
+        "roomId": "111024e8-0a7b-44d0-8dd7-220e73da1526",
+        "roomCode": "ROOM_08",
+        "roomName": "Phòng 08",
+        "roomType": "EXAMINATION",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "144ad2ba-bd22-499d-bdce-5c9a8d4a1071",
+        "type": "ROOM",
+        "label": "Phòng 09",
+        "color": "#d97706",
+        "points": [
+          {
+            "x": 1.5812707280651392,
+            "y": 2.5106325493367456
+          },
+          {
+            "x": 2.2888579145516323,
+            "y": 2.254489563634533
+          },
+          {
+            "x": 2.536383121608306,
+            "y": 2.9382703994265364
+          },
+          {
+            "x": 1.8287959351218128,
+            "y": 3.1944133851287493
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "05516d49-8850-481f-aec2-4b9c471afad1",
+        "roomId": "c115706a-c9b6-42bc-b487-a8e54ec9e66e",
+        "roomCode": "ROOM_09",
+        "roomName": "Phòng 09",
+        "roomType": "WARD",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      },
+      {
+        "id": "8147f3d3-6a2c-48e8-a6e5-90585c173c24",
+        "type": "ROOM",
+        "label": "LT",
+        "color": "#0d9488",
+        "points": [
+          {
+            "x": 4.764616735648653,
+            "y": 2.639020105147414
+          },
+          {
+            "x": 4.794973100439267,
+            "y": 2.2202975584184035
+          },
+          {
+            "x": 5.050152459935364,
+            "y": 2.2337282353557715
+          },
+          {
+            "x": 5.0265016374272715,
+            "y": 2.6745390433544807
+          }
+        ],
+        "lineWidthM": 0.04,
+        "fontSizeM": 0.13,
+        "endpointId": "3f599409-70a9-4ca3-a0df-ca5bcf1bfcde",
+        "roomId": "e91990ae-4b9f-4b71-a54d-92743d47d52c",
+        "roomCode": "ROOM_LT",
+        "roomName": "LT",
+        "roomType": "WAITING_AREA",
+        "departmentCode": "OUTPATIENT",
+        "roomDescription": null,
+        "roomPublicVisible": true
+      }
+    ],
+    "rotationDegrees": -19.9
+  },
+  "publishedRevision": 27,
+  "publishedAt": "2026-11-10T09:08:19.915699Z",
+  "sourceChanged": false
+}

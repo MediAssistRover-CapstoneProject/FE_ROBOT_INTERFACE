@@ -79,11 +79,42 @@ export interface EndpointResponse {
   active?: boolean;
 }
 
-interface BackendHospitalMapProps {
+export interface PresentationPoint {
+  x: number;
+  y: number;
+}
+
+export interface PresentationFeature {
+  id: string;
+  type: 'ROOM' | 'WALL' | 'CORRIDOR' | 'DOOR' | 'LABEL' | 'LANDMARK' | string;
+  label?: string;
+  color?: string;
+  points: PresentationPoint[];
+  lineWidthM?: number;
+  fontSizeM?: number;
+  endpointId?: string | null;
+  roomId?: string | null;
+  roomCode?: string | null;
+  roomName?: string | null;
+  roomType?: string | null;
+  departmentCode?: string | null;
+  roomDescription?: string | null;
+  roomPublicVisible?: boolean | null;
+}
+
+export interface PresentationDocument {
+  schemaVersion?: number;
+  backgroundColor?: string;
+  rotationDegrees?: number;
+  features: PresentationFeature[];
+}
+
+export interface BackendHospitalMapProps {
   map: MapResponse;
   metadata?: Record<string, any> | null;
   endpoints: EndpointResponse[];
   zones: ZoneDto[];
+  presentation?: PresentationDocument | null;
   token?: string | null;
   selectedEndpointId?: string | null;
   onSelectEndpoint?: (endpoint: EndpointResponse) => void;
@@ -142,6 +173,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   metadata,
   endpoints,
   zones,
+  presentation,
   token,
   selectedEndpointId,
   onSelectEndpoint,
@@ -155,6 +187,23 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
   const [autoAlign, setAutoAlign] = useState<SlamAutoAlignResult | null>(null);
   const [filterMode, setFilterMode] = useState<MapFilterMode>('otto_cad');
+
+  const presentationRooms = useMemo(() => {
+    if (!presentation?.features) return [];
+    return presentation.features.filter(
+      (f) =>
+        (f.type === 'ROOM' || f.type === 'CORRIDOR') &&
+        Array.isArray(f.points) &&
+        f.points.length >= 3
+    );
+  }, [presentation]);
+
+  const presentationWalls = useMemo(() => {
+    if (!presentation?.features) return [];
+    return presentation.features.filter(
+      (f) => f.type === 'WALL' && Array.isArray(f.points) && f.points.length >= 2
+    );
+  }, [presentation]);
 
   const imageUrl = useMemo(() => {
     if (customImageUrl) return customImageUrl;
@@ -334,7 +383,12 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     const cosO = Math.cos(originYaw);
     const sinO = Math.sin(originYaw);
 
-    const rotationDeg = autoAlign ? autoAlign.rotationDeg : -20;
+    const rotationDeg =
+      presentation?.rotationDegrees !== undefined
+        ? presentation.rotationDegrees
+        : autoAlign
+        ? autoAlign.rotationDeg
+        : -19.9;
     const rotationRad = (rotationDeg * Math.PI) / 180;
     const cosR = Math.cos(rotationRad);
     const sinR = Math.sin(rotationRad);
@@ -359,21 +413,28 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     let yMin = autoAlign ? autoAlign.yMin : -pixelHeight * 0.42;
     let yMax = autoAlign ? autoAlign.yMax : pixelHeight * 0.42;
 
-    const expandWithPoint = (pt: MapPoint) => {
+    const expandWithPoint = (pt: MapPoint, margin = 6) => {
       const { rx, ry } = worldToRotatedCenter(pt);
-      const margin = 6;
       if (rx - margin < xMin) xMin = rx - margin;
       if (rx + margin > xMax) xMax = rx + margin;
       if (ry - margin < yMin) yMin = ry - margin;
       if (ry + margin > yMax) yMax = ry + margin;
     };
 
+    if (presentation?.features) {
+      presentation.features.forEach((feature) => {
+        feature.points.forEach((p) => {
+          expandWithPoint({ x: originX + p.x, y: originY + p.y }, 8);
+        });
+      });
+    }
+
     visibleEndpoints.forEach((ep) =>
-      expandWithPoint({ x: Number(ep.xM), y: Number(ep.yM) })
+      expandWithPoint({ x: Number(ep.xM), y: Number(ep.yM) }, 6)
     );
-    visibleZones.forEach(({ points }) => points.forEach(expandWithPoint));
+    visibleZones.forEach(({ points }) => points.forEach((p) => expandWithPoint(p, 6)));
     if (validRobotPose) {
-      expandWithPoint({ x: validRobotPose.xM, y: validRobotPose.yM });
+      expandWithPoint({ x: validRobotPose.xM, y: validRobotPose.yM }, 6);
     }
 
     const viewWidth = Math.max(10, xMax - xMin);
@@ -398,6 +459,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       pixelWidth,
       pixelHeight,
       resolution,
+      originX,
+      originY,
       originYaw,
       rotationDeg,
       rotationRad,
@@ -415,6 +478,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     map,
     metadata,
     naturalSize,
+    presentation,
     validRobotPose,
     visibleEndpoints,
     visibleZones,
@@ -444,7 +508,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
           styles.canvasContainer,
           {
             aspectRatio,
-            backgroundColor: filterMode === 'otto_dark' ? '#1E242B' : '#CDCDCD',
+            backgroundColor: filterMode === 'otto_dark' ? '#1E242B' : '#F8FAFC',
           },
         ]}
       >
@@ -576,6 +640,123 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
               fill="url(#ottoCadGrid)"
             />
           )}
+
+          {/* Sơ đồ CAD Kiến trúc (Presentation Map): Tường (Walls) */}
+          {presentationWalls.map((wall, idx) => {
+            const pixelPoints = wall.points.map((p) =>
+              geometry.toViewPixel({
+                x: geometry.originX + p.x,
+                y: geometry.originY + p.y,
+              })
+            );
+            const pointsStr = pixelPoints.map((p) => `${p.x},${p.y}`).join(' ');
+            return (
+              <Polyline
+                key={wall.id || `pres-wall-${idx}`}
+                points={pointsStr}
+                fill="none"
+                stroke={wall.color || '#334155'}
+                strokeWidth={Math.max(1.8, viewWidth / 140)}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            );
+          })}
+
+          {/* Sơ đồ CAD Kiến trúc (Presentation Map): Các phòng khám dạng khối màu sắc sắc nét */}
+          {presentationRooms.map((room) => {
+            const pixelPoints = room.points.map((p) =>
+              geometry.toViewPixel({
+                x: geometry.originX + p.x,
+                y: geometry.originY + p.y,
+              })
+            );
+            const pointsStr = pixelPoints.map((p) => `${p.x},${p.y}`).join(' ');
+            const centerX =
+              pixelPoints.reduce((s, p) => s + p.x, 0) / pixelPoints.length;
+            const centerY =
+              pixelPoints.reduce((s, p) => s + p.y, 0) / pixelPoints.length;
+
+            const matchEp = visibleEndpoints.find((e) => {
+              if (room.endpointId && e.endpointId === room.endpointId) return true;
+              const epCode = (e.endpointCode || '').trim().toLowerCase();
+              const rCode = (room.roomCode || '').trim().toLowerCase();
+              const rLabel = (room.label || '').trim().toLowerCase();
+              if (rCode && epCode === rCode) return true;
+              if (rLabel && epCode === rLabel) return true;
+              if (rLabel && (e.endpointName || '').toLowerCase().includes(rLabel)) return true;
+              return false;
+            });
+
+            const isSelected = Boolean(
+              selectedEndpointId &&
+                ((room.endpointId && selectedEndpointId === room.endpointId) ||
+                  (matchEp &&
+                    (selectedEndpointId === matchEp.endpointId ||
+                      selectedEndpointId.toLowerCase() ===
+                        (matchEp.endpointCode || '').toLowerCase())) ||
+                  (room.roomCode &&
+                    selectedEndpointId.toLowerCase() === room.roomCode.toLowerCase()) ||
+                  (room.label &&
+                    selectedEndpointId.toLowerCase() === room.label.toLowerCase()))
+            );
+
+            const roomColor = room.color || '#3B82F6';
+            const labelFontSize = Math.max(4.6, viewWidth / 34);
+
+            return (
+              <G
+                key={room.id}
+                onPress={
+                  matchEp && onSelectEndpoint
+                    ? () => onSelectEndpoint(matchEp)
+                    : undefined
+                }
+              >
+                {/* Khối phòng màu pastel nổi bật */}
+                <Polygon
+                  points={pointsStr}
+                  fill={roomColor}
+                  fillOpacity={isSelected ? 0.35 : 0.18}
+                  stroke={roomColor}
+                  strokeWidth={
+                    isSelected
+                      ? Math.max(2.4, viewWidth / 100)
+                      : Math.max(1.4, viewWidth / 160)
+                  }
+                  strokeLinejoin="round"
+                />
+                {/* Tên phòng với viền trắng tương phản cao (Halo) */}
+                {room.label ? (
+                  <G pointerEvents="none">
+                    <SvgText
+                      x={centerX}
+                      y={centerY + labelFontSize * 0.32}
+                      textAnchor="middle"
+                      fontSize={labelFontSize}
+                      fontWeight="800"
+                      fill="#FFFFFF"
+                      stroke="#FFFFFF"
+                      strokeWidth={Math.max(2.4, viewWidth / 75)}
+                      strokeLinejoin="round"
+                    >
+                      {room.label}
+                    </SvgText>
+                    <SvgText
+                      x={centerX}
+                      y={centerY + labelFontSize * 0.32}
+                      textAnchor="middle"
+                      fontSize={labelFontSize}
+                      fontWeight="800"
+                      fill="#0F172A"
+                    >
+                      {room.label}
+                    </SvgText>
+                  </G>
+                ) : null}
+              </G>
+            );
+          })}
 
           {/* 1. Các phân khu Traffic Control (Zones) */}
           {visibleZones.map(({ zone, points }) => {
@@ -741,30 +922,34 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                   stroke="#FFFFFF"
                   strokeWidth={Math.max(0.7, viewWidth / 260)}
                 />
-                {/* Viền halo trắng bảo đảm tên phòng không bị chìm vào nét tường đen */}
-                <SvgText
-                  x={point.x}
-                  y={point.y - r - 2}
-                  textAnchor="middle"
-                  fontSize={fontSize}
-                  fontWeight="800"
-                  fill="#FFFFFF"
-                  stroke="#FFFFFF"
-                  strokeWidth={Math.max(2, viewWidth / 85)}
-                  strokeLinejoin="round"
-                >
-                  {epLabel}
-                </SvgText>
-                <SvgText
-                  x={point.x}
-                  y={point.y - r - 2}
-                  textAnchor="middle"
-                  fontSize={fontSize}
-                  fontWeight="800"
-                  fill={isSelected ? '#1D4ED8' : '#0F172A'}
-                >
-                  {epLabel}
-                </SvgText>
+                {/* Chỉ hiển thị nhãn của endpoint nếu chưa có Presentation Room hoặc khi endpoint được chọn để giao diện thoáng, tinh tế */}
+                {(presentationRooms.length === 0 || isSelected) && (
+                  <G pointerEvents="none">
+                    <SvgText
+                      x={point.x}
+                      y={point.y - r - 2}
+                      textAnchor="middle"
+                      fontSize={fontSize}
+                      fontWeight="800"
+                      fill="#FFFFFF"
+                      stroke="#FFFFFF"
+                      strokeWidth={Math.max(2, viewWidth / 85)}
+                      strokeLinejoin="round"
+                    >
+                      {epLabel}
+                    </SvgText>
+                    <SvgText
+                      x={point.x}
+                      y={point.y - r - 2}
+                      textAnchor="middle"
+                      fontSize={fontSize}
+                      fontWeight="800"
+                      fill={isSelected ? '#1D4ED8' : '#0F172A'}
+                    >
+                      {epLabel}
+                    </SvgText>
+                  </G>
+                )}
               </G>
             );
           })}
