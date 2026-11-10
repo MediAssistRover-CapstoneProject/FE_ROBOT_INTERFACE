@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { AppText, Button, Card, LoadingState, Notice, Screen } from '../../components/ui';
+import { QrScannerModal } from '../../components/QrScannerModal';
 import { colors, radii } from '../../theme';
+import { robotApiService } from '../../services/api';
+import { generateUuid } from '../../services/api/config';
 import { DeliveryConnectionForm } from './DeliveryConnectionForm';
 import { DeliveryConnection, createDeliveryReader } from './deliveryReader';
 import { DeliveryQrCode } from './DeliveryQrCode';
@@ -14,8 +17,8 @@ const stages: Record<DeliveryStage, { title: string; instruction: string; icon: 
   queued: { title: 'Đã nhận nhiệm vụ', instruction: 'Đang chờ hệ thống điều phối robot.', icon: 'clipboard-outline' },
   toSender: { title: 'Đang đến điểm gửi', instruction: 'Vui lòng chuẩn bị hàng tại điểm gửi.', icon: 'navigate-outline' },
   waitingSender: { title: 'Chờ nạp hàng', instruction: 'Robot đang chờ bước xác thực của người gửi.', icon: 'cube-outline' },
-  authSender: { title: 'Chờ người gửi xác thực', instruction: 'Hệ thống đang chờ người gửi xác thực để mở khoang.', icon: 'qr-code-outline' },
-  authReceiver: { title: 'Chờ người nhận xác thực', instruction: 'Hệ thống đang chờ người nhận xác thực để mở khoang.', icon: 'qr-code-outline' },
+  authSender: { title: 'Quét QR người gửi', instruction: 'Nhân viên gửi hàng mở app, hiện mã QR. Robot quét bằng camera để xác thực mở khoang.', icon: 'camera-outline' },
+  authReceiver: { title: 'Quét QR người nhận', instruction: 'Nhân viên nhận hàng mở app, hiện mã QR. Robot quét bằng camera để xác thực mở khoang.', icon: 'camera-outline' },
   unlockingSender: { title: 'Chờ xác nhận mở khóa tại điểm gửi', instruction: 'Chờ hệ thống xác nhận khoang đã mở trước khi nạp hàng.', icon: 'lock-open-outline' },
   unlockingReceiver: { title: 'Chờ xác nhận mở khóa tại điểm nhận', instruction: 'Chờ hệ thống xác nhận khoang đã mở trước khi lấy hàng.', icon: 'lock-open-outline' },
   loading: { title: 'Chờ nạp hàng', instruction: 'Đặt hàng vào khoang và xác nhận trên ứng dụng Staff.', icon: 'cube-outline' },
@@ -31,6 +34,8 @@ const stages: Record<DeliveryStage, { title: string; instruction: string; icon: 
   cancelling: { title: 'Đang dừng nhiệm vụ', instruction: 'Vui lòng chờ hệ thống xác nhận trạng thái robot.', icon: 'pause-circle-outline' },
   recovery: { title: 'Cần nhân viên kiểm tra', instruction: 'Hệ thống yêu cầu kiểm tra trước khi tiếp tục giao hàng.', icon: 'warning-outline' },
 };
+
+const STAFF_QR_PREFIX = 'MARSTAFF1.';
 
 function PartyDetails({ title, party }: { title: string; party?: DeliveryParty }) {
   return (
@@ -85,14 +90,16 @@ export function QrDeliveryMissionScreen({ connection, onConnect }: {
   return (
     <DeliveryMissionDisplay
       reader={reader}
+      connection={connection}
       limited={connection.mode === 'device'}
       onEdit={() => setEditing(true)}
     />
   );
 }
 
-function DeliveryMissionDisplay({ reader, limited, onEdit }: {
+function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
   reader: DeliveryReader;
+  connection: DeliveryConnection;
   limited: boolean;
   onEdit: () => void;
 }) {
@@ -102,6 +109,28 @@ function DeliveryMissionDisplay({ reader, limited, onEdit }: {
   const stage = mission ? resolveDeliveryStage(mission) : null;
   const summary = stage ? stages[stage] : null;
   const waitingQr = stage === 'authSender' || stage === 'authReceiver';
+
+  // Camera scanner state
+  const [scannerOpen, setScannerOpen] = useState(false);
+
+  const jobId = mission?.jobId ?? (connection.mode === 'device' ? connection.jobId : null);
+  const authStepId = challenge?.authJobStepId ?? mission?.step?.jobStepId ?? null;
+  const scanPhase = stage === 'authSender' ? 'Người gửi · Điểm A' : 'Người nhận · Điểm B';
+
+  /** Robot quét mã QR Staff → gửi proof lên server */
+  const handleCameraScan = async (rawPayload: string) => {
+    if (!jobId || !authStepId) {
+      throw new Error('Chưa có thông tin Job hoặc bước xác thực đang hoạt động.');
+    }
+    if (!rawPayload.startsWith(STAFF_QR_PREFIX)) {
+      throw new Error('Mã QR không hợp lệ. Yêu cầu nhân viên mở app và hiện mã QR giao nhận.');
+    }
+    await robotApiService.verifyStaffPhoneQr(jobId, {
+      authJobStepId: authStepId,
+      transportSessionId: generateUuid(), // placeholder — server sẽ kiểm tra MQTT session
+      proof: rawPayload,
+    });
+  };
 
   return (
     <Screen>
@@ -141,16 +170,32 @@ function DeliveryMissionDisplay({ reader, limited, onEdit }: {
                 </View>
               </View>
               <AppText>{summary.instruction}</AppText>
+
+              {/* Nút mở camera quét QR Staff khi đang ở bước xác thực */}
+              {waitingQr && (
+                <View style={styles.scanActions}>
+                  <Button
+                    title={stage === 'authSender' ? '📷 Quét QR người gửi' : '📷 Quét QR người nhận'}
+                    icon="camera"
+                    onPress={() => setScannerOpen(true)}
+                  />
+                  <AppText variant="caption" style={styles.center}>
+                    Nhân viên y tế mở app Staff → hiện mã QR → Robot quét bằng camera
+                  </AppText>
+                </View>
+              )}
+
+              {/* Hiển thị mã QR robot (dự phòng — Staff quét robot) */}
               {challenge && (
                 <View style={styles.qr}>
                   <AppText variant="caption" style={styles.eyebrow}>
                     {challenge.purpose === 'DELIVERY_SENDER'
-                      ? 'QR #1 · NGƯỜI GỬI QUÉT ĐỂ MỞ KHOANG BỎ ĐỒ'
-                      : 'QR #2 · NGƯỜI NHẬN QUÉT ĐỂ MỞ KHOANG LẤY ĐỒ'}
+                      ? 'HOẶC: STAFF QUÉT MÃ NÀY TRÊN ROBOT'
+                      : 'HOẶC: STAFF QUÉT MÃ NÀY TRÊN ROBOT'}
                   </AppText>
                   <DeliveryQrCode payload={challenge.qrPayload} size={qrSize} />
                   <AppText variant="caption" style={styles.center}>
-                    Mở ứng dụng Staff và hướng camera vào mã QR.
+                    Staff cũng có thể hướng camera vào mã QR trên màn hình robot.
                   </AppText>
                 </View>
               )}
@@ -181,6 +226,16 @@ function DeliveryMissionDisplay({ reader, limited, onEdit }: {
         )}
         <Button title="Cài đặt kết nối" variant="secondary" icon="settings-outline" onPress={onEdit} />
       </View>
+
+      {/* Camera QR Scanner Modal */}
+      {scannerOpen && (
+        <QrScannerModal
+          title={stage === 'authSender' ? 'Quét QR nhân viên gửi' : 'Quét QR nhân viên nhận'}
+          subtitle={jobId ? `Job ${jobId.slice(0, 8).toUpperCase()} · ${scanPhase}` : scanPhase}
+          onScan={handleCameraScan}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
     </Screen>
   );
 }
@@ -195,6 +250,7 @@ const styles = StyleSheet.create({
   },
   statusCopy: { flex: 1 },
   success: { borderColor: colors.success, backgroundColor: colors.successSoft },
+  scanActions: { gap: 8, paddingVertical: 8 },
   qr: { alignItems: 'center', gap: 8, paddingVertical: 8 },
   center: { textAlign: 'center' },
   parties: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },

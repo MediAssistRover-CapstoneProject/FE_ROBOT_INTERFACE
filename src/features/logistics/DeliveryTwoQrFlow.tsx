@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { AppText, Button, Card, Notice } from '../../components/ui';
+import { QrScannerModal } from '../../components/QrScannerModal';
 import { colors, radii } from '../../theme';
 import { DeliveryQrCode } from './DeliveryQrCode';
 import type { DeliveryPurpose } from './deliveryMission';
@@ -88,6 +89,7 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
   const qrSize = Math.max(160, Math.min(240, width - 120));
   const [step, setStep] = useState<FlowStep>('senderQr');
   const [jobId, setJobId] = useState(randomId);
+  const [scannerOpen, setScannerOpen] = useState(false);
 
   // Hai mã QR khác nhau hoàn toàn cho cùng một job.
   const senderQr = useMemo(() => buildPreviewPayload(jobId, 'DELIVERY_SENDER'), [jobId]);
@@ -168,7 +170,35 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
       </Card>
 
       <Notice message="Đang ở chế độ xem trước: mã QR đúng định dạng MARQR1 nhưng chữ ký là giả lập, Staff App sẽ không xác thực được. Bấm 'Kết nối Job thật' để robot hiển thị mã QR có chữ ký do Backend cấp." />
+
+      {/* Nút mở camera quét QR Staff (chế độ xem trước) */}
+      {(step === 'senderQr' || step === 'receiverQr') && (
+        <Button
+          title={isSender ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
+          icon="camera"
+          variant="secondary"
+          onPress={() => setScannerOpen(true)}
+        />
+      )}
+
       <Button title="Kết nối Job thật / Bridge" variant="secondary" icon="link-outline" onPress={onConnectRealJob} />
+
+      {/* Camera Scanner Modal */}
+      {scannerOpen && (
+        <QrScannerModal
+          title={isSender ? 'Quét QR nhân viên gửi' : 'Quét QR nhân viên nhận'}
+          subtitle={`Xem trước · Job ${jobId.slice(0, 8).toUpperCase()}`}
+          onScan={async (raw) => {
+            // Chế độ xem trước: chỉ kiểm tra format, không gọi server
+            if (!raw.startsWith('MARSTAFF1.')) {
+              throw new Error('Mã QR không đúng định dạng Staff. Yêu cầu nhân viên mở app và hiện mã QR giao nhận.');
+            }
+            // Giả lập xác thực thành công → chuyển bước
+            advance();
+          }}
+          onClose={() => setScannerOpen(false)}
+        />
+      )}
     </View>
   );
 }
