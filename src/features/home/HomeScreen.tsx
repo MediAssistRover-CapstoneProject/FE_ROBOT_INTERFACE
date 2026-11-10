@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -14,6 +14,9 @@ type AppTab = 'patient' | 'qrDelivery';
 
 export function HomeScreen(props: Props) {
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
   const [activeTab, setActiveTab] = useState<AppTab>('patient');
   const [deliveryConnection, setDeliveryConnection] = useState<DeliveryConnection | null>(null);
 
@@ -27,9 +30,26 @@ export function HomeScreen(props: Props) {
         )}
       </View>
 
-      {/* Mode Switcher Navigation Dock (Floating Pill at Bottom) */}
-      <View style={[styles.dockContainer, { paddingBottom: Math.max(10, insets.bottom) }]}>
-        <View style={styles.dockBar}>
+      {/* Mode Switcher Navigation Dock (Floating Pill) */}
+      <View
+        style={[
+          styles.dockContainer,
+          isLandscape
+            ? {
+                bottom: Math.max(6, insets.bottom),
+                right: Math.max(14, insets.right),
+                alignItems: 'flex-end',
+              }
+            : {
+                bottom: 0,
+                left: 0,
+                right: 0,
+                alignItems: 'center',
+                paddingBottom: Math.max(10, insets.bottom),
+              },
+        ]}
+      >
+        <View style={[styles.dockBar, isLandscape && styles.dockBarLandscape]}>
           {/* Tab 1: Bệnh nhân */}
           <Pressable
             accessibilityRole="button"
@@ -38,7 +58,7 @@ export function HomeScreen(props: Props) {
           >
             <Ionicons
               name={activeTab === 'patient' ? 'person' : 'person-outline'}
-              size={13}
+              size={12}
               color={activeTab === 'patient' ? '#FFFFFF' : '#94A3B8'}
             />
             <AppText
@@ -59,7 +79,7 @@ export function HomeScreen(props: Props) {
           >
             <Ionicons
               name={activeTab === 'qrDelivery' ? 'qr-code' : 'qr-code-outline'}
-              size={13}
+              size={12}
               color={activeTab === 'qrDelivery' ? '#FFFFFF' : '#94A3B8'}
             />
             <AppText
@@ -71,7 +91,6 @@ export function HomeScreen(props: Props) {
               Vận chuyển
             </AppText>
           </Pressable>
-
         </View>
       </View>
     </View>
@@ -81,24 +100,20 @@ export function HomeScreen(props: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#0F172A',
   },
   screenArea: {
     flex: 1,
   },
   dockContainer: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
     pointerEvents: 'box-none',
   },
   dockBar: {
     flexDirection: 'row',
     backgroundColor: '#0F172A',
     borderRadius: 30,
-    padding: 4,
+    padding: 3,
     gap: 3,
     shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
@@ -108,21 +123,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#334155',
   },
+  dockBarLandscape: {
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    padding: 2.5,
+  },
   dockTab: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 7,
-    borderRadius: 24,
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
   },
   dockTabActive: {
-    backgroundColor: '#0066CC',
+    backgroundColor: '#2563EB',
   },
   dockLabel: {
-    fontSize: 10,
-    fontWeight: '600',
     color: '#94A3B8',
+    fontSize: 10.5,
+    fontWeight: '600',
   },
   dockLabelActive: {
     color: '#FFFFFF',
