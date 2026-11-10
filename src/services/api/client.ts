@@ -44,6 +44,7 @@ class ApiClient {
   public async ensureDeviceToken(
     robotCode = DEFAULT_ROBOT_CODE,
     deviceSecret = DEFAULT_DEVICE_SECRET,
+    signal?: AbortSignal,
   ): Promise<string | null> {
     const now = Date.now();
     if (this.token && this.tokenExpiresAt > now + 60_000) {
@@ -59,6 +60,7 @@ class ApiClient {
           'X-Request-ID': generateUuid(),
         },
         body: JSON.stringify({ robotCode, deviceSecret }),
+        signal,
       });
 
       if (response.ok) {
