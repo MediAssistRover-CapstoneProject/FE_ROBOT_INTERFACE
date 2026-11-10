@@ -5,33 +5,30 @@ import { AppText, Button, Card, Notice } from '../../components/ui';
 import { QrScannerModal } from '../../components/QrScannerModal';
 import { colors, radii } from '../../theme';
 import { DeliveryQrCode } from './DeliveryQrCode';
-import { StaffOnDutyPicker, type OnDutyStaff } from './StaffOnDutyPicker';
 import type { DeliveryPurpose } from './deliveryMission';
 
 /**
  * Luồng giao nhận 2 mã QR hiển thị trên màn hình robot:
  *
- *  0. Chọn nhân viên nhận hàng → tự lấy accountId.
- *  1. Điểm gửi (A)  → Robot quét QR Staff gửi (`DELIVERY_SENDER`)
+ *  1. Điểm gửi (A)  → QR #1 `DELIVERY_SENDER`: người gửi quét bằng Staff App
+ *     để mở khoang, bỏ đồ vào rồi đóng & khóa.
  *  2. Vận chuyển A → B (khoang khóa).
- *  3. Điểm nhận (B) → Robot quét QR Staff nhận (`DELIVERY_RECEIVER`)
+ *  3. Điểm nhận (B) → QR #2 `DELIVERY_RECEIVER` (mã khác hoàn toàn): người nhận
+ *     quét để mở khoang, lấy đồ, đóng khoang → hoàn tất.
+ *
+ * Chế độ này là bản xem trước khi chưa gắn Job thật. Khi kết nối Job thật,
+ * mã QR có chữ ký sẽ do Backend cấp (`/api/v1/pi/jobs/{jobId}/qr-challenge`).
  */
 
-type FlowStep = 'selectStaff' | 'senderQr' | 'loading' | 'transporting' | 'receiverQr' | 'unloading' | 'done';
+type FlowStep = 'senderQr' | 'loading' | 'transporting' | 'receiverQr' | 'unloading' | 'done';
 
-const ORDER: FlowStep[] = ['selectStaff', 'senderQr', 'loading', 'transporting', 'receiverQr', 'unloading', 'done'];
+const ORDER: FlowStep[] = ['senderQr', 'loading', 'transporting', 'receiverQr', 'unloading', 'done'];
 
 const STEP_INFO: Record<FlowStep, { title: string; hint: string; icon: keyof typeof Ionicons.glyphMap; next?: string }> = {
-  selectStaff: {
-    title: 'Chọn nhân viên nhận hàng',
-    hint: 'Chọn nhân viên y tế đang trực ca để giao hàng. Hệ thống tự lấy Account ID.',
-    icon: 'people-outline',
-    next: 'Tiếp tục →',
-  },
   senderQr: {
-    title: 'Điểm gửi (A) · Quét QR người gửi',
-    hint: 'Nhân viên gửi mở app Staff, hiện mã QR. Robot quét bằng camera.',
-    icon: 'camera-outline',
+    title: 'Điểm gửi (A) · Quét QR #1',
+    hint: 'Người gửi mở Staff App, quét mã QR #1 để mở khoang robot.',
+    icon: 'qr-code-outline',
     next: 'Đã quét — mở khoang',
   },
   loading: {
@@ -47,9 +44,9 @@ const STEP_INFO: Record<FlowStep, { title: string; hint: string; icon: keyof typ
     next: 'Robot đã đến điểm nhận',
   },
   receiverQr: {
-    title: 'Điểm nhận (B) · Quét QR người nhận',
-    hint: 'Nhân viên nhận mở app Staff, hiện mã QR. Robot quét bằng camera.',
-    icon: 'camera-outline',
+    title: 'Điểm nhận (B) · Quét QR #2',
+    hint: 'Người nhận mở Staff App, quét mã QR #2 để mở khoang lấy đồ.',
+    icon: 'qr-code-outline',
     next: 'Đã quét — mở khoang',
   },
   unloading: {
@@ -66,6 +63,7 @@ const STEP_INFO: Record<FlowStep, { title: string; hint: string; icon: keyof typ
 };
 
 const b64url = (input: string) => {
+  // btoa có sẵn trên Hermes/Web; mã ASCII nên an toàn.
   const encoded = typeof btoa === 'function' ? btoa(input) : input;
   return encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
@@ -76,6 +74,7 @@ const randomId = () =>
     return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
 
+/** Payload cùng định dạng `MARQR1` với Staff App (chữ ký giả lập ở chế độ xem trước). */
 function buildPreviewPayload(jobId: string, purpose: DeliveryPurpose) {
   const challengeId = randomId();
   const stepId = randomId();
@@ -88,11 +87,11 @@ function buildPreviewPayload(jobId: string, purpose: DeliveryPurpose) {
 export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () => void }) {
   const { width } = useWindowDimensions();
   const qrSize = Math.max(160, Math.min(240, width - 120));
-  const [step, setStep] = useState<FlowStep>('selectStaff');
+  const [step, setStep] = useState<FlowStep>('senderQr');
   const [jobId, setJobId] = useState(randomId);
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [selectedStaff, setSelectedStaff] = useState<OnDutyStaff | null>(null);
 
+  // Hai mã QR khác nhau hoàn toàn cho cùng một job.
   const senderQr = useMemo(() => buildPreviewPayload(jobId, 'DELIVERY_SENDER'), [jobId]);
   const receiverQr = useMemo(() => buildPreviewPayload(jobId, 'DELIVERY_RECEIVER'), [jobId]);
 
@@ -101,25 +100,20 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
   const qr = step === 'senderQr' ? senderQr : step === 'receiverQr' ? receiverQr : null;
   const isSender = step === 'senderQr';
 
-  const advance = () => {
-    if (step === 'selectStaff' && !selectedStaff) return;
-    setStep(ORDER[Math.min(index + 1, ORDER.length - 1)] ?? 'done');
-  };
+  const advance = () => setStep(ORDER[Math.min(index + 1, ORDER.length - 1)] ?? 'done');
   const reset = () => {
     setJobId(randomId());
-    setStep('selectStaff');
-    setSelectedStaff(null);
+    setStep('senderQr');
   };
 
   return (
     <View style={styles.wrap}>
-      {/* Thanh tiến trình */}
+      {/* Thanh tiến trình A → B */}
       <View style={styles.progress}>
         {[
-          { label: 'Chọn Staff', active: index === 0, done: index > 0 },
-          { label: 'QR Gửi', active: index >= 1 && index <= 2, done: index > 2 },
-          { label: 'Vận chuyển', active: index === 3, done: index > 3 },
-          { label: 'QR Nhận', active: index >= 4 && index <= 5, done: index > 5 },
+          { label: 'QR #1 · Gửi', active: index <= 1, done: index > 1 },
+          { label: 'Vận chuyển', active: index === 2, done: index > 2 },
+          { label: 'QR #2 · Nhận', active: index >= 3 && index <= 4, done: index > 4 },
         ].map((s, i) => (
           <View key={s.label} style={styles.progressItem}>
             <View
@@ -152,27 +146,6 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
         </View>
         <AppText>{info.hint}</AppText>
 
-        {/* Bước 0: Chọn nhân viên nhận */}
-        {step === 'selectStaff' && (
-          <View style={styles.staffSection}>
-            <StaffOnDutyPicker selected={selectedStaff} onSelect={setSelectedStaff} />
-          </View>
-        )}
-
-        {/* Hiển thị thẻ Staff đã chọn (các bước sau) */}
-        {step !== 'selectStaff' && selectedStaff && (
-          <View style={styles.selectedBanner}>
-            <Ionicons name="person-circle" size={22} color={colors.primary} />
-            <View style={styles.selectedInfo}>
-              <AppText style={styles.selectedName}>{selectedStaff.fullName}</AppText>
-              <AppText style={styles.selectedDetail}>
-                {selectedStaff.roomCode} · ID: {selectedStaff.accountId.slice(0, 8).toUpperCase()}
-              </AppText>
-            </View>
-          </View>
-        )}
-
-        {/* Mã QR dự phòng (Staff quét robot) */}
         {qr && (
           <View style={styles.qrBox}>
             <View style={[styles.qrBadge, { backgroundColor: isSender ? '#0369A1' : '#047857' }]}>
@@ -189,28 +162,25 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
 
         <View style={styles.actions}>
           {info.next ? (
-            <Button
-              title={info.next}
-              icon={step === 'selectStaff' ? 'arrow-forward' : 'arrow-forward'}
-              onPress={advance}
-              disabled={step === 'selectStaff' && !selectedStaff}
-            />
+            <Button title={info.next} icon="arrow-forward" onPress={advance} />
           ) : (
             <Button title="Nhiệm vụ mới" icon="refresh" onPress={reset} />
           )}
         </View>
       </Card>
 
-      {/* Nút mở camera quét QR Staff */}
+      <Notice message="Đang ở chế độ xem trước: mã QR đúng định dạng MARQR1 nhưng chữ ký là giả lập, Staff App sẽ không xác thực được. Bấm 'Kết nối Job thật' để robot hiển thị mã QR có chữ ký do Backend cấp." />
+
+      {/* Nút mở camera quét QR Staff (chế độ xem trước) */}
       {(step === 'senderQr' || step === 'receiverQr') && (
         <Button
           title={isSender ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
           icon="camera"
+          variant="secondary"
           onPress={() => setScannerOpen(true)}
         />
       )}
 
-      <Notice message="Đang ở chế độ xem trước: mã QR đúng định dạng MARQR1 nhưng chữ ký là giả lập, Staff App sẽ không xác thực được. Bấm 'Kết nối Job thật' để robot hiển thị mã QR có chữ ký do Backend cấp." />
       <Button title="Kết nối Job thật / Bridge" variant="secondary" icon="link-outline" onPress={onConnectRealJob} />
 
       {/* Camera Scanner Modal */}
@@ -219,9 +189,11 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
           title={isSender ? 'Quét QR nhân viên gửi' : 'Quét QR nhân viên nhận'}
           subtitle={`Xem trước · Job ${jobId.slice(0, 8).toUpperCase()}`}
           onScan={async (raw) => {
+            // Chế độ xem trước: chỉ kiểm tra format, không gọi server
             if (!raw.startsWith('MARSTAFF1.')) {
               throw new Error('Mã QR không đúng định dạng Staff. Yêu cầu nhân viên mở app và hiện mã QR giao nhận.');
             }
+            // Giả lập xác thực thành công → chuyển bước
             advance();
           }}
           onClose={() => setScannerOpen(false)}
@@ -233,7 +205,7 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
 
 const styles = StyleSheet.create({
   wrap: { gap: 14 },
-  progress: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 2 },
+  progress: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
   progressItem: { alignItems: 'center', gap: 4, flex: 1 },
   progressDot: {
     width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
@@ -243,7 +215,7 @@ const styles = StyleSheet.create({
   progressDotDone: { backgroundColor: colors.success },
   progressNum: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
   progressNumActive: { color: '#FFFFFF' },
-  progressLabel: { fontSize: 10, color: colors.textMuted, fontWeight: '600' },
+  progressLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
   progressLabelActive: { color: colors.primaryDark, fontWeight: '800' },
   heading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   icon: {
@@ -252,16 +224,6 @@ const styles = StyleSheet.create({
   },
   headingCopy: { flex: 1 },
   success: { borderColor: colors.success, backgroundColor: colors.successSoft },
-  staffSection: { marginTop: 4 },
-  selectedBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: 'rgba(2,132,199,0.08)', borderRadius: radii.md,
-    paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1,
-    borderColor: 'rgba(2,132,199,0.25)',
-  },
-  selectedInfo: { flex: 1 },
-  selectedName: { fontSize: 13, fontWeight: '700', color: colors.primaryDark },
-  selectedDetail: { fontSize: 11, color: '#64748B' },
   qrBox: { alignItems: 'center', gap: 8, paddingVertical: 8 },
   qrBadge: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
   qrBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
