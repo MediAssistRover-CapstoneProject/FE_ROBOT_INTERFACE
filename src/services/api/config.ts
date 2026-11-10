@@ -9,7 +9,7 @@ const getBackendBaseUrl = (): string => {
   // Trên thiết bị thật (iPhone/Android qua Expo Go):
   // Nếu url cấu hình là localhost, tự động thay bằng IP Wi-Fi máy tính từ hostUri để điện thoại gọi được máy tính
   const hostUri = Constants.expoConfig?.hostUri;
-  const lanIp = hostUri ? hostUri.split(':')[0] : '10.3.90.174';
+  const lanIp = hostUri ? hostUri.split(':')[0] : '192.168.88.54';
 
   const raw = process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() || 'http://localhost:8080';
   if (raw.includes('localhost') || raw.includes('127.0.0.1')) {
