@@ -75,17 +75,129 @@ export const DEFAULT_HOSPITAL_ZONES: ZoneDto[] = [
   },
 ];
 
-// 11 Điểm đến (Endpoints) thực tế trên map final o truong
+// 11 Điểm đến (Endpoints) thực tế đã hiệu chuẩn (calibrated) chuẩn xác trên map 'final o truong'
 export const DEFAULT_HOSPITAL_ENDPOINTS: EndpointResponse[] = [
-  { endpointId: 'ep-01', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '01', endpointName: 'phòng 1', xM: 1.34, yM: -0.33 },
-  { endpointId: 'ep-02', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '02', endpointName: 'phòng 2', xM: 1.54, yM: 1.02 },
-  { endpointId: 'ep-03', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '03', endpointName: 'phòng 3', xM: 0.12, yM: 1.12 },
-  { endpointId: 'ep-04', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '04', endpointName: 'phòng 4', xM: 1.77, yM: -0.42 },
-  { endpointId: 'ep-05', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '05', endpointName: 'phòng 5', xM: 1.72, yM: 1.18 },
-  { endpointId: 'ep-06', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: '06', endpointName: 'phòng 6', xM: 0.55, yM: -0.85 },
-  { endpointId: 'ep-kho', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: 'kho', endpointName: 'phòng kho', xM: 0.85, yM: 0.25 },
-  { endpointId: 'ep-lt', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: 'lt', endpointName: 'Lễ tân', xM: -0.25, yM: -0.15 },
-  { endpointId: 'ep-wc', mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09', endpointCode: 'WC', endpointName: 'Khu vệ sinh', xM: -1.15, yM: 0.75 },
+  {
+    endpointId: '049204b7-cd5c-41b8-af99-1cd2797d796c',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '01',
+    endpointName: 'phòng 1',
+    endpointType: 'WAYPOINT',
+    xM: 0.0373,
+    yM: -0.3043,
+    yawRad: -2.03837,
+    active: true,
+  },
+  {
+    endpointId: '9601325c-037f-443f-89c4-5e43ee69878f',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '02',
+    endpointName: 'phòng 2',
+    endpointType: 'WAYPOINT',
+    xM: -1.0377,
+    yM: -0.0043,
+    yawRad: -2.094395,
+    active: true,
+  },
+  {
+    endpointId: '755370df-de88-48ba-9c94-65163f75adf0',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '03',
+    endpointName: 'phòng 3',
+    endpointType: 'WAYPOINT',
+    xM: -2.2877,
+    yM: 0.4457,
+    yawRad: -2.059489,
+    active: true,
+  },
+  {
+    endpointId: '61768589-0667-4072-b2ea-3007605c2c35',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '04',
+    endpointName: 'phòng 4',
+    endpointType: 'WAYPOINT',
+    xM: -1.5627,
+    yM: 2.3207,
+    yawRad: 1.448623,
+    active: true,
+  },
+  {
+    endpointId: '17f3bde7-13fa-4d7b-b9e2-0775e9031bcd',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '05',
+    endpointName: 'phòng 5',
+    endpointType: 'WAYPOINT',
+    xM: -0.7377,
+    yM: 2.0457,
+    yawRad: 1.22173,
+    active: true,
+  },
+  {
+    endpointId: '12923b22-c6c6-4ed7-9fbf-155d41a5987b',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: '06',
+    endpointName: 'phòng 6',
+    endpointType: 'WAYPOINT',
+    xM: 0.9873,
+    yM: 1.4457,
+    yawRad: 1.37881,
+    active: true,
+  },
+  {
+    endpointId: 'b99fdb64-30ca-45a4-b2ef-3ed8c3173254',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: 'kho',
+    endpointName: 'phòng kho',
+    endpointType: 'WAYPOINT',
+    xM: -1.9877,
+    yM: 2.4207,
+    yawRad: 2.146755,
+    active: true,
+  },
+  {
+    endpointId: '3f599409-70a9-4ca3-a0df-ca5bcf1bfcde',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: 'lt',
+    endpointName: 'Lễ tân',
+    endpointType: 'WAYPOINT',
+    xM: 1.1623,
+    yM: 0.8957,
+    yawRad: 0,
+    active: true,
+  },
+  {
+    endpointId: 'a5185658-b5db-4d60-85c0-38c65204fe7c',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: 'WC',
+    endpointName: 'Khu vệ sinh',
+    endpointType: 'WAYPOINT',
+    xM: -2.8127,
+    yM: 0.9957,
+    yawRad: -2.443461,
+    active: true,
+  },
+  {
+    endpointId: 'c8c111a3-d97f-4677-adc8-d8211c07ecb5',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: 'c',
+    endpointName: 'Sảnh C',
+    endpointType: 'WAYPOINT',
+    xM: -0.3127,
+    yM: 0.6957,
+    yawRad: -0.317999,
+    active: true,
+  },
+  {
+    endpointId: '05516d49-8850-481f-aec2-4b9c471afad1',
+    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+    endpointCode: 'h',
+    endpointName: 'Hành lang H',
+    endpointType: 'WAYPOINT',
+    xM: -0.7377,
+    yM: 1.2207,
+    yawRad: 2.645221,
+    active: true,
+  },
 ];
 
 let cachedViewerToken: string | null = null;
@@ -178,17 +290,38 @@ class RobotMapService {
       }
     } catch {}
 
-    // 4. Lấy danh sách endpoints
+    // 4. Lấy danh sách endpoints (lấy toàn bộ size=100)
     try {
-      const epRes = await fetch(`${REMOTE_API_BASE}/endpoints`, { headers });
+      const epRes = await fetch(`${REMOTE_API_BASE}/endpoints?page=0&size=100`, { headers });
       if (epRes.ok) {
         const epData = await epRes.json();
         const list = epData?.content;
         if (Array.isArray(list) && list.length > 0) {
           const filtered = list.filter(
-            (e: any) => e.mapId === activeMap.mapId && Number.isFinite(Number(e.xM))
+            (e: any) =>
+              e.mapId === activeMap.mapId &&
+              e.active !== false &&
+              Number.isFinite(Number(e.xM)) &&
+              Number.isFinite(Number(e.yM))
           );
-          if (filtered.length > 0) endpoints = filtered;
+          if (filtered.length > 0) {
+            // Chuẩn hóa tên tiếng Việt rõ ràng cho các phòng
+            endpoints = filtered.map((ep: any) => {
+              let name = (ep.endpointName || ep.endpointCode || '').trim();
+              if (ep.endpointCode === 'c') name = 'Sảnh C';
+              else if (ep.endpointCode === 'h') name = 'Hành lang H';
+              else if (ep.endpointCode === 'WC') name = 'Khu vệ sinh';
+              else if (ep.endpointCode === 'kho') name = 'Phòng kho';
+              else if (ep.endpointCode === '01') name = 'Phòng 1';
+              else if (ep.endpointCode === '02') name = 'Phòng 2';
+              else if (ep.endpointCode === '03') name = 'Phòng 3';
+              else if (ep.endpointCode === '04') name = 'Phòng 4';
+              else if (ep.endpointCode === '05') name = 'Phòng 5';
+              else if (ep.endpointCode === '06') name = 'Phòng 6';
+              else if (ep.endpointCode === 'lt') name = 'Lễ tân';
+              return { ...ep, endpointName: name };
+            });
+          }
         }
       }
     } catch {}

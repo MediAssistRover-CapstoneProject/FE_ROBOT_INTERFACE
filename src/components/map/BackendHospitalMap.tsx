@@ -72,6 +72,7 @@ export interface EndpointResponse {
   zoneId?: string;
   endpointCode: string;
   endpointName?: string;
+  endpointType?: string;
   xM?: number;
   yM?: number;
   yawRad?: number;
@@ -701,9 +702,18 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
               x: Number(endpoint.xM),
               y: Number(endpoint.yM),
             });
-            const isSelected = selectedEndpointId === endpoint.endpointId;
+            const isSelected =
+              selectedEndpointId === endpoint.endpointId ||
+              selectedEndpointId === endpoint.endpointCode ||
+              Boolean(
+                selectedEndpointId &&
+                  endpoint.endpointCode &&
+                  selectedEndpointId.toUpperCase() === endpoint.endpointCode.toUpperCase()
+              );
             const r = isSelected ? Math.max(3.8, viewWidth / 68) : Math.max(2.4, viewWidth / 95);
             const hitRadius = Math.max(12, viewWidth / 16);
+            const epLabel = (endpoint.endpointName || endpoint.endpointCode || '').trim();
+            const fontSize = Math.max(3.8, viewWidth / 48);
 
             return (
               <G
@@ -720,8 +730,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                 <Circle
                   cx={point.x}
                   cy={point.y}
-                  r={r * 1.5}
-                  fill={isSelected ? 'rgba(37, 99, 235, 0.22)' : 'rgba(14, 165, 233, 0.12)'}
+                  r={isSelected ? r * 2.2 : r * 1.5}
+                  fill={isSelected ? 'rgba(37, 99, 235, 0.35)' : 'rgba(14, 165, 233, 0.16)'}
                 />
                 <Circle
                   cx={point.x}
@@ -731,15 +741,29 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                   stroke="#FFFFFF"
                   strokeWidth={Math.max(0.7, viewWidth / 260)}
                 />
+                {/* Viền halo trắng bảo đảm tên phòng không bị chìm vào nét tường đen */}
                 <SvgText
                   x={point.x}
                   y={point.y - r - 2}
                   textAnchor="middle"
-                  fontSize={Math.max(3.8, viewWidth / 48)}
-                  fontWeight="700"
-                  fill="#0F172A"
+                  fontSize={fontSize}
+                  fontWeight="800"
+                  fill="#FFFFFF"
+                  stroke="#FFFFFF"
+                  strokeWidth={Math.max(2, viewWidth / 85)}
+                  strokeLinejoin="round"
                 >
-                  {endpoint.endpointName || endpoint.endpointCode}
+                  {epLabel}
+                </SvgText>
+                <SvgText
+                  x={point.x}
+                  y={point.y - r - 2}
+                  textAnchor="middle"
+                  fontSize={fontSize}
+                  fontWeight="800"
+                  fill={isSelected ? '#1D4ED8' : '#0F172A'}
+                >
+                  {epLabel}
                 </SvgText>
               </G>
             );

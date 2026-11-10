@@ -63,7 +63,9 @@ export function PatientHubScreen({ navigation }: Props) {
 
   // 3. Danh mục phòng khám & Lựa chọn điểm đến
   const [destinations] = useState<ClinicDestination[]>(DEFAULT_HOSPITAL_ROOMS);
-  const [selectedRoomId, setSelectedRoomId] = useState<string>('room-capcuu');
+  const [selectedRoomId, setSelectedRoomId] = useState<string>(
+    DEFAULT_HOSPITAL_ROOMS[0]?.id || 'room-01'
+  );
 
   // 4. Trạng thái Dẫn đường (Escort) & Quỹ đạo Nav2
   const [isEscorting, setIsEscorting] = useState<boolean>(false);
@@ -180,10 +182,21 @@ export function PatientHubScreen({ navigation }: Props) {
     setActiveRequestId(reqId);
     setVoiceFeedback(`Robot đang bắt đầu dẫn bạn đến ${selectedRoom.name}...`);
 
+    const matchEp =
+      endpoints.find(
+        (ep) => ep.endpointCode.toUpperCase() === selectedRoom.roomCode.toUpperCase()
+      ) ||
+      endpoints.find(
+        (ep) => ep.endpointName?.toLowerCase().includes(selectedRoom.name.toLowerCase())
+      ) ||
+      endpoints[0];
+    const destinationEndpointId =
+      matchEp?.endpointId || '049204b7-cd5c-41b8-af99-1cd2797d796c';
+
     try {
       await robotApiService.requestEscort({
         mapId: activeMap.mapId || DEFAULT_MAP_ID,
-        destinationEndpointId: '370a77bb-02fd-4008-92f1-d11253a693ab',
+        destinationEndpointId,
         destinationRoomId:
           selectedRoom.id.includes('-') && selectedRoom.id.length === 36
             ? selectedRoom.id
