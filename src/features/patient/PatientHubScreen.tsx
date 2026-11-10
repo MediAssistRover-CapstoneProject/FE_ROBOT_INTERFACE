@@ -292,7 +292,15 @@ export function PatientHubScreen({ navigation }: Props) {
 
               <IndoorHospitalMap
                 targetRoom={selectedRoom.roomCode}
-                targetSubText={selectedRoom.name.split(' ')[0] || 'Phòng'}
+                targetSubText={selectedRoom.name}
+                robotCode={DEFAULT_ROBOT_CODE}
+                robotBusy={isEscorting}
+                onSelectTarget={(code) => {
+                  const match = destinations.find(
+                    (d) => d.roomCode.toUpperCase() === code.toUpperCase(),
+                  );
+                  if (match) setSelectedRoomId(match.id);
+                }}
               />
             </View>
 
