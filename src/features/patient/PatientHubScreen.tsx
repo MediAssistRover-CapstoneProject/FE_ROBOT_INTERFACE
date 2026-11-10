@@ -70,6 +70,7 @@ export function PatientHubScreen({ navigation }: Props) {
   const [escortStep, setEscortStep] = useState<number>(0);
   const [loadingEscort, setLoadingEscort] = useState<boolean>(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [liveNavPlan, setLiveNavPlan] = useState<MapPlanPoint[] | null>(null);
 
   // 5. Trợ lý giọng nói & Báo động SOS
   const [isSendingVoice, setIsSendingVoice] = useState<boolean>(false);
@@ -98,7 +99,7 @@ export function PatientHubScreen({ navigation }: Props) {
 
     initMapData();
 
-    // Polling telemetry robot mỗi 2 giây
+    // Polling telemetry robot và quỹ đạo Nav2 mỗi 1 giây (như Staff App)
     const pollTelemetry = async () => {
       try {
         const snap = await robotMapService.loadRobotSnapshot();
@@ -112,39 +113,65 @@ export function PatientHubScreen({ navigation }: Props) {
           const pct = Math.min(100, Math.max(10, Math.round(snap.batteryRaw / 100)));
           setBatteryPercent(pct);
         }
+        if (snap.navigationPlan && snap.navigationPlan.length >= 2) {
+          setLiveNavPlan(snap.navigationPlan);
+        } else if (snap.status === 'IDLE' && !isEscorting) {
+          setLiveNavPlan(null);
+        }
       } catch {}
     };
 
     pollTelemetry();
-    const timer = setInterval(pollTelemetry, 2000);
+    const timer = setInterval(pollTelemetry, 1000);
 
     return () => {
       alive = false;
       clearInterval(timer);
       if (escortIntervalRef.current) clearInterval(escortIntervalRef.current);
     };
-  }, []);
+  }, [isEscorting]);
 
   const fallbackRoom = DEFAULT_HOSPITAL_ROOMS[0] as ClinicDestination;
   const selectedRoom: ClinicDestination =
     destinations.find((d) => d.id === selectedRoomId) || fallbackRoom;
 
-  // Quỹ đạo Nav2 phát sáng khi đang dẫn đường đến điểm đích
+  // Quỹ đạo Nav2 phát sáng khi robot đang di chuyển hoặc đang chọn phòng
   const plannedPath: MapPlanPoint[] | null = useMemo(() => {
-    if (!isEscorting || !robotPose) return null;
-    const matchEp =
-      endpoints.find((ep) => ep.endpointCode.toUpperCase() === selectedRoom.roomCode.toUpperCase()) ||
-      endpoints[0];
-    if (!matchEp || !Number.isFinite(Number(matchEp.xM))) return null;
+    // 1. Ưu tiên kế hoạch điều hướng Nav2 thật từ Backend
+    if (liveNavPlan && liveNavPlan.length >= 2) {
+      return liveNavPlan;
+    }
 
-    const midX = (robotPose.xM + Number(matchEp.xM)) / 2;
-    const midY = (robotPose.yM + Number(matchEp.yM)) / 2 + 0.35;
+    if (!robotPose) return null;
+
+    // 2. Tự động vẽ đường dẫn từ vị trí xe AMR đến cửa phòng được chọn
+    const matchEp =
+      endpoints.find(
+        (ep) => ep.endpointCode.toUpperCase() === selectedRoom.roomCode.toUpperCase()
+      ) ||
+      endpoints.find(
+        (ep) => ep.endpointName?.toLowerCase().includes(selectedRoom.name.toLowerCase())
+      ) ||
+      endpoints[0];
+
+    if (!matchEp || !Number.isFinite(Number(matchEp.xM)) || !Number.isFinite(Number(matchEp.yM))) {
+      return null;
+    }
+
+    const startX = robotPose.xM;
+    const startY = robotPose.yM;
+    const endX = Number(matchEp.xM);
+    const endY = Number(matchEp.yM);
+
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2 + 0.35;
+
     return [
-      { xM: robotPose.xM, yM: robotPose.yM },
+      { xM: startX, yM: startY },
       { xM: midX, yM: midY },
-      { xM: Number(matchEp.xM), yM: Number(matchEp.yM) },
+      { xM: endX, yM: endY },
     ];
-  }, [endpoints, isEscorting, robotPose, selectedRoom.roomCode]);
+  }, [endpoints, liveNavPlan, robotPose, selectedRoom]);
 
   // Xử lý yêu cầu Robot dẫn đường (POST /api/v1/pi/requests/escort)
   const handleRequestEscort = async () => {

@@ -249,9 +249,12 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
 
   const validPlannedPath = useMemo(() => {
     if (!Array.isArray(plannedPath) || plannedPath.length < 2) return null;
-    const pts = plannedPath.filter(
-      (p) => Number.isFinite(Number(p.xM)) && Number.isFinite(Number(p.yM))
-    );
+    const pts = plannedPath
+      .map((p: any) => ({
+        xM: Number(p?.xM ?? p?.x_m ?? p?.x),
+        yM: Number(p?.yM ?? p?.y_m ?? p?.y),
+      }))
+      .filter((p) => Number.isFinite(p.xM) && Number.isFinite(p.yM));
     return pts.length >= 2 ? pts : null;
   }, [plannedPath]);
 
@@ -260,14 +263,13 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     const xM = Number(robotPose.xM);
     const yM = Number(robotPose.yM);
     if (!Number.isFinite(xM) || !Number.isFinite(yM)) return null;
-    if (robotPose.mapId && robotPose.mapId !== map.mapId) return null;
     return {
       ...robotPose,
       xM,
       yM,
       yawRad: Number(robotPose.yawRad) || 0,
     };
-  }, [map.mapId, robotPose]);
+  }, [robotPose]);
 
   const geometry = useMemo(() => {
     const resolution = Math.max(
@@ -646,24 +648,49 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                 return `${p.x},${p.y}`;
               })
               .join(' ');
+            const lastPt = validPlannedPath[validPlannedPath.length - 1];
+            const endPixel = lastPt ? geometry.toViewPixel({ x: lastPt.xM, y: lastPt.yM }) : null;
             return (
               <G>
+                {/* Hào quang phát sáng cyan rộng */}
                 <Polyline
                   points={polyPoints}
                   fill="none"
-                  stroke="rgba(14, 165, 233, 0.35)"
-                  strokeWidth={Math.max(3.4, viewWidth / 70)}
+                  stroke="rgba(14, 165, 233, 0.40)"
+                  strokeWidth={Math.max(4.5, viewWidth / 60)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
+                {/* Đường nét chính màu xanh cyan Nav2 */}
                 <Polyline
                   points={polyPoints}
                   fill="none"
                   stroke="#0EA5E9"
-                  strokeWidth={Math.max(1.5, viewWidth / 140)}
+                  strokeWidth={Math.max(2.2, viewWidth / 120)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
+                {/* Đường nét đứt màu trắng nổi bật ở giữa */}
+                <Polyline
+                  points={polyPoints}
+                  fill="none"
+                  stroke="#FFFFFF"
+                  strokeWidth={Math.max(1.0, viewWidth / 240)}
+                  strokeDasharray="4,3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                {/* Điểm đích đến nhấp nháy trên đường dẫn */}
+                {endPixel && (
+                  <Circle
+                    cx={endPixel.x}
+                    cy={endPixel.y}
+                    r={Math.max(3.5, viewWidth / 80)}
+                    fill="none"
+                    stroke="#0EA5E9"
+                    strokeWidth={1.5}
+                  />
+                )}
               </G>
             );
           })()}

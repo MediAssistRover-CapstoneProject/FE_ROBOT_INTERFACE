@@ -3,6 +3,7 @@ import {
   ZoneDto,
   EndpointResponse,
   MapRobotPose,
+  MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
 
 export const REMOTE_API_BASE = 'https://mediassistrover.duckdns.org/api/v1';
@@ -89,10 +90,11 @@ export const DEFAULT_HOSPITAL_ENDPOINTS: EndpointResponse[] = [
 
 let cachedViewerToken: string | null = null;
 let tokenExpiresAt = 0;
+let cachedActiveRobotId: string = '0e3f1083-2546-4f45-8004-5eda5cb75a6f';
 
 class RobotMapService {
   /**
-   * Lấy token đọc dữ liệu hệ thống (viewer/staff) từ Backend
+   * Lấy token đọc dữ liệu hệ thống (viewer/admin) từ Backend
    */
   public async getViewerToken(): Promise<string | null> {
     const now = Date.now();
@@ -105,9 +107,9 @@ class RobotMapService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          username: 'staff2',
-          password: 'password123',
-          deviceInfo: 'RobotScreen-MapReader',
+          username: 'admin',
+          password: '1234567891011',
+          deviceInfo: 'RobotScreen-LiveMonitor',
         }),
       });
       if (res.ok) {
@@ -143,7 +145,8 @@ class RobotMapService {
         const mapsData = await mapsRes.json();
         const list = mapsData?.content;
         if (Array.isArray(list) && list.length > 0) {
-          const match = list.find((m: any) => m.mapName?.toLowerCase().includes('truong')) || list[0];
+          const match =
+            list.find((m: any) => m.mapName?.toLowerCase().includes('truong')) || list[0];
           activeMap = match;
         }
       }
@@ -151,7 +154,9 @@ class RobotMapService {
 
     // 2. Lấy metadata của ảnh map
     try {
-      const metaRes = await fetch(`${REMOTE_API_BASE}/maps/${activeMap.mapId}/image-metadata`, { headers });
+      const metaRes = await fetch(`${REMOTE_API_BASE}/maps/${activeMap.mapId}/image-metadata`, {
+        headers,
+      });
       if (metaRes.ok) {
         const metaData = await metaRes.json();
         if (metaData?.width_px) {
@@ -180,7 +185,9 @@ class RobotMapService {
         const epData = await epRes.json();
         const list = epData?.content;
         if (Array.isArray(list) && list.length > 0) {
-          const filtered = list.filter((e: any) => e.mapId === activeMap.mapId && Number.isFinite(Number(e.xM)));
+          const filtered = list.filter(
+            (e: any) => e.mapId === activeMap.mapId && Number.isFinite(Number(e.xM))
+          );
           if (filtered.length > 0) endpoints = filtered;
         }
       }
@@ -196,20 +203,41 @@ class RobotMapService {
   }
 
   /**
-   * Tải snapshot & vị trí thời gian thực của Robot (Nav2 Telemetry)
+   * Tải snapshot & vị trí thời gian thực của Robot (Nav2 Telemetry + Quỹ đạo di chuyển)
    */
-  public async loadRobotSnapshot(robotId = '0e3f1083-2546-4f45-8004-5eda5cb75a6f'): Promise<{
+  public async loadRobotSnapshot(): Promise<{
     pose: MapRobotPose | null;
     isPoseLive: boolean;
     status: string;
     batteryRaw: number;
     mqttConnected: boolean;
+    navigationPlan: MapPlanPoint[] | null;
   }> {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
+    // 1. Tự động nhận diện ID robot đang hoạt động trên hệ thống
     try {
-      const res = await fetch(`${REMOTE_API_BASE}/robots/${robotId}/snapshot`, { headers });
+      const robotsRes = await fetch(`${REMOTE_API_BASE}/robots`, { headers });
+      if (robotsRes.ok) {
+        const robotsData = await robotsRes.json();
+        const list = robotsData?.content || robotsData;
+        if (Array.isArray(list) && list.length > 0) {
+          const busy = list.find((r: any) => r.status === 'BUSY');
+          const idle = list.find((r: any) => r.status === 'IDLE');
+          const selected = busy || idle || list[0];
+          if (selected?.robotId) {
+            cachedActiveRobotId = selected.robotId;
+          }
+        }
+      }
+    } catch {}
+
+    // 2. Lấy Snapshot trực tiếp của Robot (Tọa độ Nav2 + Đường đi Planned Path)
+    try {
+      const res = await fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, {
+        headers,
+      });
       if (res.ok) {
         const snapshot = await res.json();
         const p = snapshot?.latestPose;
@@ -224,23 +252,40 @@ class RobotMapService {
               }
             : null;
 
+        // Trích xuất toàn bộ toạ độ điểm đường đi từ kế hoạch điều hướng Nav2 (navigationPlan)
+        let navigationPlan: MapPlanPoint[] | null = null;
+        const rawPoints = snapshot?.navigationPlan?.points;
+        if (Array.isArray(rawPoints) && rawPoints.length >= 2) {
+          navigationPlan = rawPoints
+            .map((pt: any) => ({
+              xM: Number(pt?.xM ?? pt?.x_m ?? pt?.x),
+              yM: Number(pt?.yM ?? pt?.y_m ?? pt?.y),
+            }))
+            .filter((pt) => Number.isFinite(pt.xM) && Number.isFinite(pt.yM));
+        }
+
         return {
           pose,
-          isPoseLive: Boolean(snapshot?.mqttConnected && snapshot?.heartbeatFresh),
+          isPoseLive: Boolean(
+            snapshot?.mqttConnected && snapshot?.heartbeatFresh && p?.fresh !== false
+          ),
           status: snapshot?.robot?.status || 'IDLE',
           batteryRaw: snapshot?.robot?.batteryRaw || 7850,
           mqttConnected: Boolean(snapshot?.mqttConnected),
+          navigationPlan:
+            navigationPlan && navigationPlan.length >= 2 ? navigationPlan : null,
         };
       }
     } catch {}
 
-    // Dự phòng vị trí chuẩn
+    // Dự phòng khi mất kết nối mạng
     return {
-      pose: { xM: 0.15, yM: -0.26, yawRad: -1.92, fresh: true, mapId: DEFAULT_HOSPITAL_MAP.mapId },
+      pose: null,
       isPoseLive: false,
       status: 'IDLE',
-      batteryRaw: 7914,
+      batteryRaw: 7850,
       mqttConnected: false,
+      navigationPlan: null,
     };
   }
 }
