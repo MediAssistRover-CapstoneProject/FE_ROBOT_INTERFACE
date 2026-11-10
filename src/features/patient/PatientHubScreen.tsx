@@ -5,12 +5,12 @@ import {
   ScrollView,
   StyleSheet,
   View,
-  useWindowDimensions,
   ActivityIndicator,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { RootStackParamList } from '../../app/navigation';
 import { AppText } from '../../components/ui';
 import {
@@ -21,7 +21,6 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
-import { colors } from '../../theme';
 import { robotApiService } from '../../services/api';
 import { DEFAULT_ROBOT_CODE } from '../../services/api/config';
 import {
@@ -37,8 +36,11 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 export function PatientHubScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
-  const isLandscape = width > height;
+
+  // Khóa cứng màn hình xoay ngang (Landscape)
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+  }, []);
 
   // 1. Dữ liệu Bản đồ Backend (Đồng bộ 100% với Staff App UI app)
   const [activeMap, setActiveMap] = useState<MapResponse>(DEFAULT_HOSPITAL_MAP);
@@ -60,7 +62,7 @@ export function PatientHubScreen({ navigation }: Props) {
   const [batteryPercent, setBatteryPercent] = useState<number>(85);
 
   // 3. Danh mục phòng khám & Lựa chọn điểm đến
-  const [destinations, setDestinations] = useState<ClinicDestination[]>(DEFAULT_HOSPITAL_ROOMS);
+  const [destinations] = useState<ClinicDestination[]>(DEFAULT_HOSPITAL_ROOMS);
   const [selectedRoomId, setSelectedRoomId] = useState<string>('room-capcuu');
 
   // 4. Trạng thái Dẫn đường (Escort) & Quỹ đạo Nav2
@@ -96,7 +98,7 @@ export function PatientHubScreen({ navigation }: Props) {
 
     initMapData();
 
-    // Lặp polling telemetry robot mỗi 2 giây
+    // Polling telemetry robot mỗi 2 giây
     const pollTelemetry = async () => {
       try {
         const snap = await robotMapService.loadRobotSnapshot();
@@ -155,7 +157,10 @@ export function PatientHubScreen({ navigation }: Props) {
       await robotApiService.requestEscort({
         mapId: activeMap.mapId || DEFAULT_MAP_ID,
         destinationEndpointId: '370a77bb-02fd-4008-92f1-d11253a693ab',
-        destinationRoomId: selectedRoom.id.includes('-') && selectedRoom.id.length === 36 ? selectedRoom.id : undefined,
+        destinationRoomId:
+          selectedRoom.id.includes('-') && selectedRoom.id.length === 36
+            ? selectedRoom.id
+            : undefined,
         targetMode: 'ENDPOINT',
         escortMode: 'GUIDED',
         walkingSpeedMps: 0.25,
@@ -250,267 +255,52 @@ export function PatientHubScreen({ navigation }: Props) {
   };
 
   // ==========================================
-  // RENDER GIAO DIỆN NẰM NGANG (LANDSCAPE: MAP 2/3 - CONTROL 1/3)
-  // ==========================================
-  if (isLandscape) {
-    return (
-      <View
-        style={[
-          styles.landscapeRoot,
-          {
-            paddingTop: insets.top,
-            paddingBottom: insets.bottom,
-            paddingLeft: Math.max(insets.left, 12),
-            paddingRight: Math.max(insets.right, 12),
-          },
-        ]}
-      >
-        {/* ======================================================== */}
-        {/* CỘT TRÁI (2/3 CHIỀU NGANG): BẢN ĐỒ SLAM ROBOT CHUẨN STAFF */}
-        {/* ======================================================== */}
-        <View style={styles.landscapeMapColumn}>
-          {/* Header thanh mảnh trên đầu bản đồ */}
-          <View style={styles.mapTopHeader}>
-            <View style={styles.mapTitleLeft}>
-              <Ionicons name="hardware-chip-outline" size={16} color="#38BDF8" />
-              <AppText style={styles.mapMainTitle}>MediAssist Rover AMR</AppText>
-              <View style={styles.mapLiveBadge}>
-                <View style={[styles.statusDot, { backgroundColor: isPoseLive ? '#10B981' : '#F59E0B' }]} />
-                <AppText style={styles.mapLiveBadgeText}>
-                  {isPoseLive ? 'LIVE NAV2' : 'BE HYBRID'}
-                </AppText>
-              </View>
-            </View>
-
-            <View style={styles.mapHeaderRight}>
-              <View style={styles.targetPill}>
-                <Ionicons name="pin" size={12} color="#0284C7" />
-                <AppText style={styles.targetPillText}>Đích: {selectedRoom.roomCode}</AppText>
-              </View>
-            </View>
-          </View>
-
-          {/* Canvas Bản đồ chuẩn OTTO Fleet Manager */}
-          <View style={styles.mapWrapper}>
-            <BackendHospitalMap
-              map={activeMap}
-              metadata={mapMetadata}
-              endpoints={endpoints}
-              zones={zones}
-              token={authToken}
-              selectedEndpointId={selectedRoom.roomCode}
-              onSelectEndpoint={handleSelectEndpoint}
-              robotPose={robotPose}
-              isPoseLive={isPoseLive}
-              plannedPath={plannedPath}
-            />
-          </View>
-        </View>
-
-        {/* ======================================================== */}
-        {/* CỘT PHẢI (1/3 CHIỀU NGANG): NÚT SOS, VOICE & HIỂN THỊ CHỮ */}
-        {/* ======================================================== */}
-        <View style={styles.landscapeControlColumn}>
-          <ScrollView
-            style={styles.controlScroll}
-            contentContainerStyle={styles.controlScrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* 1. Header trạng thái Robot mini */}
-            <View style={styles.miniStatusBar}>
-              <View style={styles.miniRobotInfo}>
-                <Ionicons name="navigate-circle" size={15} color="#38BDF8" />
-                <AppText style={styles.miniRobotCode}>{DEFAULT_ROBOT_CODE}</AppText>
-                <View style={styles.statusPillSmall}>
-                  <AppText style={styles.statusPillSmallText}>
-                    {isEscorting ? 'DẪN ĐƯỜNG' : robotStatus}
-                  </AppText>
-                </View>
-              </View>
-
-              <View style={styles.batteryPillSmall}>
-                <Ionicons name="battery-charging" size={13} color="#10B981" />
-                <AppText style={styles.batteryPillSmallText}>{batteryPercent}%</AppText>
-              </View>
-            </View>
-
-            {/* 2. BỘ ĐÔI NÚT HÀNH ĐỘNG: SOS & VOICE */}
-            <View style={styles.actionButtonsStack}>
-              {/* NÚT CẤP CỨU SOS */}
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleEmergencySos}
-                disabled={isTriggeringSos}
-                style={({ pressed }) => [
-                  styles.sosButtonBig,
-                  pressed && { backgroundColor: '#B91C1C', transform: [{ scale: 0.98 }] },
-                ]}
-              >
-                <View style={styles.sosIconCircleBig}>
-                  {isTriggeringSos ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
-                  ) : (
-                    <Ionicons name="megaphone" size={20} color="#DC2626" />
-                  )}
-                </View>
-                <View style={styles.actionTextCol}>
-                  <AppText style={styles.sosTitleBig}>CẤP CỨU SOS</AppText>
-                  <AppText style={styles.sosSubBig}>Gọi Điều dưỡng ngay</AppText>
-                </View>
-              </Pressable>
-
-              {/* NÚT HỎI TRỢ LÝ (VOICE) */}
-              <Pressable
-                accessibilityRole="button"
-                onPress={handleVoicePress}
-                disabled={isSendingVoice}
-                style={({ pressed }) => [
-                  styles.voiceButtonBig,
-                  pressed && { backgroundColor: '#047857', transform: [{ scale: 0.98 }] },
-                ]}
-              >
-                <View style={styles.voiceIconCircleBig}>
-                  {isSendingVoice ? (
-                    <ActivityIndicator size="small" color="#059669" />
-                  ) : (
-                    <Ionicons name="mic" size={20} color="#059669" />
-                  )}
-                </View>
-                <View style={styles.actionTextCol}>
-                  <AppText style={styles.voiceTitleBig}>Hỏi Trợ lý (Voice)</AppText>
-                  <AppText style={styles.voiceSubBig}>Nói để tìm đường</AppText>
-                </View>
-              </Pressable>
-            </View>
-
-            {/* 3. KHU VỰC HIỂN THỊ CHỮ (TEXT DISPLAY & THÔNG TIN HƯỚNG DẪN) */}
-            <View style={styles.textDisplayCard}>
-              <View style={styles.textDisplayHeader}>
-                <Ionicons name="information-circle" size={15} color="#0284C7" />
-                <AppText style={styles.textDisplayHeaderTitle}>THÔNG TIN & ĐIỂM ĐẾN</AppText>
-              </View>
-
-              {/* Dòng hiển thị phản hồi giọng nói hoặc hướng dẫn */}
-              {voiceFeedback ? (
-                <View style={styles.feedbackBanner}>
-                  <Ionicons name="sparkles" size={13} color="#D97706" />
-                  <AppText style={styles.feedbackBannerText}>{voiceFeedback}</AppText>
-                </View>
-              ) : null}
-
-              {/* Thẻ phòng đã chọn */}
-              <View style={styles.destinationBox}>
-                <AppText style={styles.destinationNameText}>{selectedRoom.name}</AppText>
-                <AppText style={styles.destinationDetailText}>
-                  {selectedRoom.location} • {selectedRoom.distance} • {selectedRoom.eta}
-                </AppText>
-              </View>
-
-              {/* Nút kích hoạt dẫn đường hoặc hủy dẫn đường */}
-              {isEscorting ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleCancelEscort}
-                  style={styles.cancelEscortBtn}
-                >
-                  <Ionicons name="stop-circle" size={16} color="#FFFFFF" />
-                  <AppText style={styles.cancelEscortBtnText}>Hủy dẫn đường (Bước {escortStep}/4)</AppText>
-                </Pressable>
-              ) : (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={handleRequestEscort}
-                  disabled={loadingEscort}
-                  style={styles.startEscortBtn}
-                >
-                  {loadingEscort ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="walk" size={16} color="#FFFFFF" />
-                      <AppText style={styles.startEscortBtnText}>Bắt đầu Dẫn đường</AppText>
-                    </>
-                  )}
-                </Pressable>
-              )}
-            </View>
-
-            {/* 4. CHỌN NHANH ĐIỂM ĐẾN (QUICK ROOM SELECTOR) */}
-            <View style={styles.quickRoomsSection}>
-              <AppText style={styles.quickRoomsLabel}>CHỌN NHANH ĐIỂM ĐẾN</AppText>
-              <View style={styles.quickRoomsRow}>
-                {destinations.slice(0, 6).map((item) => {
-                  const isSelected = item.id === selectedRoomId;
-                  return (
-                    <Pressable
-                      key={item.id}
-                      onPress={() => {
-                        setSelectedRoomId(item.id);
-                        setVoiceFeedback(`Đã chọn: ${item.name} (${item.roomCode})`);
-                      }}
-                      style={[
-                        styles.roomChip,
-                        isSelected && styles.roomChipSelected,
-                      ]}
-                    >
-                      <AppText
-                        style={[
-                          styles.roomChipText,
-                          isSelected && styles.roomChipTextSelected,
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {item.roomCode}
-                      </AppText>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-      </View>
-    );
-  }
-
-  // ==========================================
-  // RENDER DỰ PHÒNG KHI ĐIỆN THOẠI ĐẶT ĐỨNG (PORTRAIT)
+  // GIAO DIỆN KHÓA CỨNG XOAY NGANG (LANDSCAPE: MAP 2/3 - CONTROL 1/3)
   // ==========================================
   return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* 1. Header Tinh gọn */}
-      <View style={styles.portraitHeader}>
-        <View style={styles.titleRow}>
-          <Ionicons name="hardware-chip-outline" size={18} color="#38BDF8" />
-          <AppText style={styles.robotTitle}>MediAssist Rover</AppText>
-          <View style={styles.robotCodeBadge}>
-            <AppText style={styles.robotCodeText}>{DEFAULT_ROBOT_CODE}</AppText>
+    <View
+      style={[
+        styles.landscapeRoot,
+        {
+          paddingTop: Math.max(insets.top, 6),
+          paddingBottom: Math.max(insets.bottom, 6),
+          paddingLeft: Math.max(insets.left, 10),
+          paddingRight: Math.max(insets.right, 10),
+        },
+      ]}
+    >
+      {/* ======================================================== */}
+      {/* CỘT TRÁI (2/3 CHIỀU NGANG): BẢN ĐỒ SLAM ROBOT CHUẨN STAFF */}
+      {/* ======================================================== */}
+      <View style={styles.landscapeMapColumn}>
+        {/* Header thanh mảnh trên đầu bản đồ */}
+        <View style={styles.mapTopHeader}>
+          <View style={styles.mapTitleLeft}>
+            <Ionicons name="hardware-chip-outline" size={15} color="#38BDF8" />
+            <AppText style={styles.mapMainTitle}>MediAssist Rover AMR</AppText>
+            <View style={styles.mapLiveBadge}>
+              <View
+                style={[
+                  styles.statusDot,
+                  { backgroundColor: isPoseLive ? '#10B981' : '#F59E0B' },
+                ]}
+              />
+              <AppText style={styles.mapLiveBadgeText}>
+                {isPoseLive ? 'LIVE NAV2' : 'BE HYBRID'}
+              </AppText>
+            </View>
+          </View>
+
+          <View style={styles.mapHeaderRight}>
+            <View style={styles.targetPill}>
+              <Ionicons name="pin" size={11} color="#0284C7" />
+              <AppText style={styles.targetPillText}>Đích: {selectedRoom.roomCode}</AppText>
+            </View>
           </View>
         </View>
 
-        <View style={styles.headerRight}>
-          <View style={styles.batteryPillSmall}>
-            <Ionicons name="battery-charging" size={13} color="#10B981" />
-            <AppText style={styles.batteryPillSmallText}>{batteryPercent}%</AppText>
-          </View>
-        </View>
-      </View>
-
-      <ScrollView
-        style={styles.scrollContainer}
-        contentContainerStyle={styles.portraitScrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Banner thông báo xoay ngang */}
-        <View style={styles.rotateNoticeBanner}>
-          <Ionicons name="phone-landscape-outline" size={16} color="#0284C7" />
-          <AppText style={styles.rotateNoticeText}>
-            Xoay ngang điện thoại để trải nghiệm giao diện Robot chuyên dụng (Map 2/3 - Nút 1/3)
-          </AppText>
-        </View>
-
-        {/* Bản đồ SLAM */}
-        <View style={styles.portraitMapWrapper}>
+        {/* Canvas Bản đồ chuẩn OTTO Fleet Manager */}
+        <View style={styles.mapWrapper}>
           <BackendHospitalMap
             map={activeMap}
             metadata={mapMetadata}
@@ -524,62 +314,175 @@ export function PatientHubScreen({ navigation }: Props) {
             plannedPath={plannedPath}
           />
         </View>
+      </View>
 
-        {/* Bộ đôi Voice & SOS */}
-        <View style={styles.portraitActionRow}>
-          <Pressable
-            onPress={handleVoicePress}
-            style={[styles.voiceButtonBig, { flex: 1 }]}
-          >
-            <View style={styles.voiceIconCircleBig}>
-              <Ionicons name="mic" size={18} color="#059669" />
+      {/* ======================================================== */}
+      {/* CỘT PHẢI (1/3 CHIỀU NGANG): NÚT SOS, VOICE & HIỂN THỊ CHỮ */}
+      {/* ======================================================== */}
+      <View style={styles.landscapeControlColumn}>
+        <ScrollView
+          style={styles.controlScroll}
+          contentContainerStyle={styles.controlScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* 1. Header trạng thái Robot mini */}
+          <View style={styles.miniStatusBar}>
+            <View style={styles.miniRobotInfo}>
+              <Ionicons name="navigate-circle" size={14} color="#38BDF8" />
+              <AppText style={styles.miniRobotCode}>{DEFAULT_ROBOT_CODE}</AppText>
+              <View style={styles.statusPillSmall}>
+                <AppText style={styles.statusPillSmallText}>
+                  {isEscorting ? 'DẪN ĐƯỜNG' : robotStatus}
+                </AppText>
+              </View>
             </View>
-            <View style={styles.actionTextCol}>
-              <AppText style={styles.voiceTitleBig}>Hỏi Trợ lý</AppText>
-              <AppText style={styles.voiceSubBig}>Nói để tìm đường</AppText>
-            </View>
-          </Pressable>
 
-          <Pressable
-            onPress={handleEmergencySos}
-            style={[styles.sosButtonBig, { flex: 1 }]}
-          >
-            <View style={styles.sosIconCircleBig}>
-              <Ionicons name="megaphone" size={18} color="#DC2626" />
+            <View style={styles.batteryPillSmall}>
+              <Ionicons name="battery-charging" size={13} color="#10B981" />
+              <AppText style={styles.batteryPillSmallText}>{batteryPercent}%</AppText>
             </View>
-            <View style={styles.actionTextCol}>
-              <AppText style={styles.sosTitleBig}>CẤP CỨU SOS</AppText>
-              <AppText style={styles.sosSubBig}>Gọi Điều dưỡng</AppText>
+          </View>
+
+          {/* 2. BỘ ĐÔI NÚT HÀNH ĐỘNG: SOS & VOICE */}
+          <View style={styles.actionButtonsStack}>
+            {/* NÚT CẤP CỨU SOS */}
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleEmergencySos}
+              disabled={isTriggeringSos}
+              style={({ pressed }) => [
+                styles.sosButtonBig,
+                pressed && { backgroundColor: '#B91C1C', transform: [{ scale: 0.98 }] },
+              ]}
+            >
+              <View style={styles.sosIconCircleBig}>
+                {isTriggeringSos ? (
+                  <ActivityIndicator size="small" color="#DC2626" />
+                ) : (
+                  <Ionicons name="megaphone" size={18} color="#DC2626" />
+                )}
+              </View>
+              <View style={styles.actionTextCol}>
+                <AppText style={styles.sosTitleBig}>CẤP CỨU SOS</AppText>
+                <AppText style={styles.sosSubBig}>Gọi Điều dưỡng ngay</AppText>
+              </View>
+            </Pressable>
+
+            {/* NÚT HỎI TRỢ LÝ (VOICE) */}
+            <Pressable
+              accessibilityRole="button"
+              onPress={handleVoicePress}
+              disabled={isSendingVoice}
+              style={({ pressed }) => [
+                styles.voiceButtonBig,
+                pressed && { backgroundColor: '#047857', transform: [{ scale: 0.98 }] },
+              ]}
+            >
+              <View style={styles.voiceIconCircleBig}>
+                {isSendingVoice ? (
+                  <ActivityIndicator size="small" color="#059669" />
+                ) : (
+                  <Ionicons name="mic" size={18} color="#059669" />
+                )}
+              </View>
+              <View style={styles.actionTextCol}>
+                <AppText style={styles.voiceTitleBig}>Hỏi Trợ lý (Voice)</AppText>
+                <AppText style={styles.voiceSubBig}>Nói để tìm đường</AppText>
+              </View>
+            </Pressable>
+          </View>
+
+          {/* 3. KHU VỰC HIỂN THỊ CHỮ (TEXT DISPLAY & THÔNG TIN HƯỚNG DẪN) */}
+          <View style={styles.textDisplayCard}>
+            <View style={styles.textDisplayHeader}>
+              <Ionicons name="information-circle" size={14} color="#0284C7" />
+              <AppText style={styles.textDisplayHeaderTitle}>THÔNG TIN & ĐIỂM ĐẾN</AppText>
             </View>
-          </Pressable>
-        </View>
 
-        {/* Thẻ hiển thị chữ */}
-        <View style={[styles.textDisplayCard, { marginHorizontal: 12, marginTop: 12 }]}>
-          <AppText style={styles.destinationNameText}>{selectedRoom.name}</AppText>
-          <AppText style={styles.destinationDetailText}>
-            {selectedRoom.location} • {selectedRoom.distance}
-          </AppText>
+            {/* Dòng hiển thị phản hồi giọng nói hoặc hướng dẫn */}
+            {voiceFeedback ? (
+              <View style={styles.feedbackBanner}>
+                <Ionicons name="sparkles" size={12} color="#D97706" />
+                <AppText style={styles.feedbackBannerText}>{voiceFeedback}</AppText>
+              </View>
+            ) : null}
 
-          <Pressable
-            onPress={isEscorting ? handleCancelEscort : handleRequestEscort}
-            style={[styles.startEscortBtn, isEscorting && styles.cancelEscortBtn]}
-          >
-            <Ionicons name={isEscorting ? 'stop-circle' : 'walk'} size={16} color="#FFFFFF" />
-            <AppText style={styles.startEscortBtnText}>
-              {isEscorting ? 'Hủy dẫn đường' : 'Bắt đầu Dẫn đường'}
-            </AppText>
-          </Pressable>
-        </View>
-      </ScrollView>
+            {/* Thẻ phòng đã chọn */}
+            <View style={styles.destinationBox}>
+              <AppText style={styles.destinationNameText}>{selectedRoom.name}</AppText>
+              <AppText style={styles.destinationDetailText}>
+                {selectedRoom.location} • {selectedRoom.distance} • {selectedRoom.eta}
+              </AppText>
+            </View>
+
+            {/* Nút kích hoạt dẫn đường hoặc hủy dẫn đường */}
+            {isEscorting ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleCancelEscort}
+                style={styles.cancelEscortBtn}
+              >
+                <Ionicons name="stop-circle" size={15} color="#FFFFFF" />
+                <AppText style={styles.cancelEscortBtnText}>
+                  Hủy dẫn đường (Bước {escortStep}/4)
+                </AppText>
+              </Pressable>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                onPress={handleRequestEscort}
+                disabled={loadingEscort}
+                style={styles.startEscortBtn}
+              >
+                {loadingEscort ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="walk" size={15} color="#FFFFFF" />
+                    <AppText style={styles.startEscortBtnText}>Bắt đầu Dẫn đường</AppText>
+                  </>
+                )}
+              </Pressable>
+            )}
+          </View>
+
+          {/* 4. CHỌN NHANH ĐIỂM ĐẾN (QUICK ROOM SELECTOR) */}
+          <View style={styles.quickRoomsSection}>
+            <AppText style={styles.quickRoomsLabel}>CHỌN NHANH ĐIỂM ĐẾN</AppText>
+            <View style={styles.quickRoomsRow}>
+              {destinations.slice(0, 6).map((item) => {
+                const isSelected = item.id === selectedRoomId;
+                return (
+                  <Pressable
+                    key={item.id}
+                    onPress={() => {
+                      setSelectedRoomId(item.id);
+                      setVoiceFeedback(`Đã chọn: ${item.name} (${item.roomCode})`);
+                    }}
+                    style={[styles.roomChip, isSelected && styles.roomChipSelected]}
+                  >
+                    <AppText
+                      style={[
+                        styles.roomChipText,
+                        isSelected && styles.roomChipTextSelected,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.roomCode}
+                    </AppText>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // ==========================================
-  // STYLES GIAO DIỆN NẰM NGANG (LANDSCAPE)
-  // ==========================================
+  // Root ngang luôn luôn
   landscapeRoot: {
     flex: 1,
     flexDirection: 'row',
@@ -589,24 +492,24 @@ const styles = StyleSheet.create({
   landscapeMapColumn: {
     flex: 2,
     height: '100%',
-    paddingRight: 8,
+    paddingRight: 6,
     justifyContent: 'flex-start',
   },
   mapTopHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 4,
-    marginBottom: 4,
+    paddingVertical: 3,
+    marginBottom: 3,
   },
   mapTitleLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   mapMainTitle: {
     color: '#FFFFFF',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '800',
   },
   mapLiveBadge: {
@@ -615,38 +518,38 @@ const styles = StyleSheet.create({
     gap: 4,
     backgroundColor: 'rgba(56, 189, 248, 0.16)',
     paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingVertical: 1.5,
+    borderRadius: 5,
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
   mapLiveBadgeText: {
     color: '#38BDF8',
-    fontSize: 9,
+    fontSize: 8.5,
     fontWeight: '800',
   },
   mapHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   targetPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
     backgroundColor: 'rgba(2, 132, 199, 0.2)',
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: '#0284C7',
   },
   targetPillText: {
     color: '#E0F2FE',
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '700',
   },
   mapWrapper: {
@@ -661,7 +564,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: '100%',
     backgroundColor: '#1E293B',
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#334155',
     overflow: 'hidden',
@@ -670,8 +573,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   controlScrollContent: {
-    padding: 10,
-    gap: 10,
+    padding: 8,
+    gap: 8,
   },
 
   // Mini status bar
@@ -679,29 +582,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingBottom: 6,
+    paddingBottom: 5,
     borderBottomWidth: 1,
     borderBottomColor: '#334155',
   },
   miniRobotInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
   },
   miniRobotCode: {
     color: '#E2E8F0',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
   },
   statusPillSmall: {
     backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    paddingHorizontal: 5,
-    paddingVertical: 1.5,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
     borderRadius: 4,
   },
   statusPillSmallText: {
     color: '#10B981',
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: '700',
   },
   batteryPillSmall: {
@@ -709,28 +612,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 3,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 5,
   },
   batteryPillSmallText: {
     color: '#E2E8F0',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '700',
   },
 
   // Nút hành động SOS và Voice
   actionButtonsStack: {
-    gap: 8,
+    gap: 6,
   },
   sosButtonBig: {
     backgroundColor: '#DC2626',
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     shadowColor: '#DC2626',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
@@ -738,9 +641,9 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   sosIconCircleBig: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -750,23 +653,23 @@ const styles = StyleSheet.create({
   },
   sosTitleBig: {
     color: '#FFFFFF',
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: '900',
     letterSpacing: 0.2,
   },
   sosSubBig: {
     color: '#FEE2E2',
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontWeight: '500',
   },
   voiceButtonBig: {
     backgroundColor: '#059669',
-    borderRadius: 10,
-    paddingVertical: 9,
-    paddingHorizontal: 10,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     shadowColor: '#059669',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
@@ -774,126 +677,126 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   voiceIconCircleBig: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
   },
   voiceTitleBig: {
     color: '#FFFFFF',
-    fontSize: 12.5,
+    fontSize: 11.5,
     fontWeight: '900',
     letterSpacing: 0.2,
   },
   voiceSubBig: {
     color: '#D1FAE5',
-    fontSize: 9.5,
+    fontSize: 8.5,
     fontWeight: '500',
   },
 
   // Khu vực hiển thị chữ & thông tin hướng dẫn
   textDisplayCard: {
     backgroundColor: '#0F172A',
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 8,
+    padding: 8,
     borderWidth: 1,
     borderColor: '#334155',
-    gap: 7,
+    gap: 6,
   },
   textDisplayHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
   },
   textDisplayHeaderTitle: {
     color: '#94A3B8',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   feedbackBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: 'rgba(217, 119, 6, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: 'rgba(217, 119, 6, 0.3)',
   },
   feedbackBannerText: {
     color: '#FDE68A',
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '600',
     flex: 1,
   },
   destinationBox: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    padding: 8,
-    borderRadius: 8,
+    padding: 7,
+    borderRadius: 6,
   },
   destinationNameText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
   },
   destinationDetailText: {
     color: '#94A3B8',
-    fontSize: 10,
-    marginTop: 2,
+    fontSize: 9.5,
+    marginTop: 1,
   },
   startEscortBtn: {
     backgroundColor: '#0284C7',
-    borderRadius: 8,
-    paddingVertical: 8,
+    borderRadius: 7,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,
   },
   startEscortBtnText: {
     color: '#FFFFFF',
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
   },
   cancelEscortBtn: {
     backgroundColor: '#EA580C',
-    borderRadius: 8,
-    paddingVertical: 8,
+    borderRadius: 7,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 5,
   },
   cancelEscortBtnText: {
     color: '#FFFFFF',
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
   },
 
   // Chọn nhanh phòng
   quickRoomsSection: {
-    gap: 5,
+    gap: 4,
   },
   quickRoomsLabel: {
     color: '#64748B',
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '700',
     letterSpacing: 0.3,
   },
   quickRoomsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 5,
+    gap: 4,
   },
   roomChip: {
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    paddingHorizontal: 7,
-    paddingVertical: 4,
-    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3.5,
+    borderRadius: 5,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
   },
@@ -903,87 +806,11 @@ const styles = StyleSheet.create({
   },
   roomChipText: {
     color: '#CBD5E1',
-    fontSize: 9.5,
+    fontSize: 9,
     fontWeight: '600',
   },
   roomChipTextSelected: {
     color: '#FFFFFF',
     fontWeight: '800',
-  },
-
-  // ==========================================
-  // STYLES GIAO DIỆN ĐỨNG (PORTRAIT FALLBACK)
-  // ==========================================
-  root: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  portraitHeader: {
-    backgroundColor: colors.headerNavy,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  robotTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  robotCodeBadge: {
-    backgroundColor: 'rgba(56, 189, 248, 0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-  },
-  robotCodeText: {
-    color: '#38BDF8',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  headerRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  scrollContainer: {
-    flex: 1,
-  },
-  portraitScrollContent: {
-    paddingBottom: 24,
-  },
-  rotateNoticeBanner: {
-    margin: 10,
-    padding: 8,
-    borderRadius: 8,
-    backgroundColor: 'rgba(2, 132, 199, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(2, 132, 199, 0.25)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  rotateNoticeText: {
-    color: '#0369A1',
-    fontSize: 11,
-    fontWeight: '600',
-    flex: 1,
-  },
-  portraitMapWrapper: {
-    marginHorizontal: 10,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  portraitActionRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginHorizontal: 10,
-    marginTop: 12,
   },
 });

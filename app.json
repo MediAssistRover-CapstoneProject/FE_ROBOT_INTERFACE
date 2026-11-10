@@ -3,7 +3,7 @@
     "name": "MediAssist • Trợ lý bệnh viện",
     "slug": "mediassist-rover",
     "version": "1.0.0",
-    "orientation": "default",
+    "orientation": "landscape",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
@@ -22,6 +22,7 @@
     "plugins": [
       "expo-font",
       "expo-status-bar",
+      "expo-screen-orientation",
       [
         "expo-camera",
         {
