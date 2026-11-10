@@ -5,28 +5,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../app/navigation';
 import { PatientHubScreen } from '../patient/PatientHubScreen';
+import type { DeliveryConnection } from '../logistics/deliveryReader';
 import { QrDeliveryMissionScreen } from '../logistics/QrDeliveryMissionScreen';
-import { FaceVerificationScreen } from '../logistics/FaceVerificationScreen';
-import { NoAuthDeliveryMissionScreen } from '../logistics/NoAuthDeliveryMissionScreen';
-import { HandoverWorkflowScreen } from '../logistics/HandoverWorkflowScreen';
 import { AppText } from '../../components/ui';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
-type AppTab = 'patient' | 'qrDelivery' | 'face' | 'noAuth' | 'handover';
+type AppTab = 'patient' | 'qrDelivery';
 
 export function HomeScreen(props: Props) {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<AppTab>('patient');
+  const [deliveryConnection, setDeliveryConnection] = useState<DeliveryConnection | null>(null);
 
   return (
     <View style={styles.container}>
       {/* Active Screen View */}
       <View style={styles.screenArea}>
         {activeTab === 'patient' && <PatientHubScreen {...props} />}
-        {activeTab === 'qrDelivery' && <QrDeliveryMissionScreen />}
-        {activeTab === 'face' && <FaceVerificationScreen />}
-        {activeTab === 'noAuth' && <NoAuthDeliveryMissionScreen />}
-        {activeTab === 'handover' && <HandoverWorkflowScreen />}
+        {activeTab === 'qrDelivery' && (
+          <QrDeliveryMissionScreen connection={deliveryConnection} onConnect={setDeliveryConnection} />
+        )}
       </View>
 
       {/* Mode Switcher Navigation Dock (Floating Pill at Bottom) */}
@@ -70,72 +68,10 @@ export function HomeScreen(props: Props) {
                 activeTab === 'qrDelivery' && styles.dockLabelActive,
               ]}
             >
-              V/C QR
+              Vận chuyển
             </AppText>
           </Pressable>
 
-          {/* Tab 3: Quét mặt (Camera thật) */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setActiveTab('face')}
-            style={[styles.dockTab, activeTab === 'face' && styles.dockTabActive]}
-          >
-            <Ionicons
-              name={activeTab === 'face' ? 'camera' : 'camera-outline'}
-              size={13}
-              color={activeTab === 'face' ? '#FFFFFF' : '#94A3B8'}
-            />
-            <AppText
-              style={[
-                styles.dockLabel,
-                activeTab === 'face' && styles.dockLabelActive,
-              ]}
-            >
-              Quét mặt
-            </AppText>
-          </Pressable>
-
-          {/* Tab 4: Vận chuyển không quét (Kèm Unhappy cases) */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setActiveTab('noAuth')}
-            style={[styles.dockTab, activeTab === 'noAuth' && styles.dockTabActive]}
-          >
-            <Ionicons
-              name={activeTab === 'noAuth' ? 'shield-checkmark' : 'shield-checkmark-outline'}
-              size={13}
-              color={activeTab === 'noAuth' ? '#FFFFFF' : '#94A3B8'}
-            />
-            <AppText
-              style={[
-                styles.dockLabel,
-                activeTab === 'noAuth' && styles.dockLabelActive,
-              ]}
-            >
-              V/C Thường
-            </AppText>
-          </Pressable>
-
-          {/* Tab 5: Bàn giao & Đóng khoang */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setActiveTab('handover')}
-            style={[styles.dockTab, activeTab === 'handover' && styles.dockTabActive]}
-          >
-            <Ionicons
-              name={activeTab === 'handover' ? 'cube' : 'cube-outline'}
-              size={13}
-              color={activeTab === 'handover' ? '#FFFFFF' : '#94A3B8'}
-            />
-            <AppText
-              style={[
-                styles.dockLabel,
-                activeTab === 'handover' && styles.dockLabelActive,
-              ]}
-            >
-              Bàn giao
-            </AppText>
-          </Pressable>
         </View>
       </View>
     </View>
