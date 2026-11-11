@@ -127,11 +127,14 @@ class RobotApiService {
   public async triggerSos(
     description = 'Bệnh nhân yêu cầu trợ giúp y tế khẩn cấp tại trạm Robot',
     severity: 'WARNING' | 'CRITICAL' = 'CRITICAL',
-    xM = 12.5,
-    yM = 4.2,
+    xM?: number,
+    yM?: number,
     mapId?: string,
+    operationKey?: string,
   ): Promise<SosResponse> {
-    await apiClient.ensureDeviceToken();
+    const token = await apiClient.ensureDeviceToken();
+    const robotId = apiClient.getRobotId();
+    if (!token || !robotId) throw new Error('Robot chưa xác thực được với máy chủ.');
     const payload: SosPayload = {
       mapId,
       endpointId: undefined,
@@ -141,7 +144,8 @@ class RobotApiService {
       yM,
     };
     const envelope = createPiEnvelope('EMERGENCY_SOS', payload, {
-      robotId: apiClient.getRobotId() || undefined,
+      robotId,
+      operationKey,
     });
     return apiClient.request<SosResponse>('/api/v1/pi/incidents/sos', {
       method: 'POST',

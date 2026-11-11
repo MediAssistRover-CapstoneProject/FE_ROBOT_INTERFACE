@@ -107,7 +107,7 @@ export interface DeviceIncidentStatusResponse {
   mapId?: string;
   endpointId?: string;
   severity?: string;
-  status: 'REPORTED' | 'ACKNOWLEDGED' | 'RESOLVED' | 'CLOSED';
+  status: 'REPORTED' | 'OPEN' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'FALSE_ALARM';
   description?: string;
   xM?: number;
   yM?: number;

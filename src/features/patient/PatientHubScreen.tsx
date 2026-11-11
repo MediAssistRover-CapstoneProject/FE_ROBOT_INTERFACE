@@ -283,7 +283,9 @@ export function PatientHubScreen({ navigation }: Props) {
         robotPose?.yM || -0.26,
         activeMap.mapId || DEFAULT_MAP_ID
       );
-    } catch {} finally {
+    } catch {
+      // Ignored
+    } finally {
       setIsTriggeringSos(false);
       navigation.navigate('Emergency');
     }
