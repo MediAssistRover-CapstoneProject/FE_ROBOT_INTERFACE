@@ -22,7 +22,11 @@ import {
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
 import { robotApiService } from '../../services/api';
-import { DEFAULT_ROBOT_CODE } from '../../services/api/config';
+import { DEFAULT_ROBOT_CODE, generateUuid } from '../../services/api/config';
+import {
+  computeGuidance,
+  NavigationGuidanceResult,
+} from '../navigation/navigationGuidance';
 import {
   robotMapService,
   DEFAULT_HOSPITAL_MAP,
@@ -74,17 +78,16 @@ export function PatientHubScreen({ navigation }: Props) {
 
   // 4. Trạng thái Dẫn đường (Escort) & Quỹ đạo Nav2
   const [isEscorting, setIsEscorting] = useState<boolean>(false);
-  const [escortStep, setEscortStep] = useState<number>(0);
   const [loadingEscort, setLoadingEscort] = useState<boolean>(false);
+  const [isStoppingEscort, setIsStoppingEscort] = useState<boolean>(false);
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
+  const [escortStatus, setEscortStatus] = useState<string>('IDLE');
   const [liveNavPlan, setLiveNavPlan] = useState<MapPlanPoint[] | null>(null);
 
   // 5. Trợ lý giọng nói & Báo động SOS
   const [isSendingVoice, setIsSendingVoice] = useState<boolean>(false);
   const [voiceFeedback, setVoiceFeedback] = useState<string | null>(null);
   const [isTriggeringSos, setIsTriggeringSos] = useState<boolean>(false);
-
-  const escortIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Tải dữ liệu Map và khởi tạo kết nối Backend
   useEffect(() => {
@@ -137,7 +140,6 @@ export function PatientHubScreen({ navigation }: Props) {
     return () => {
       alive = false;
       clearInterval(timer);
-      if (escortIntervalRef.current) clearInterval(escortIntervalRef.current);
     };
   }, [isEscorting]);
 
@@ -145,50 +147,60 @@ export function PatientHubScreen({ navigation }: Props) {
   const selectedRoom: ClinicDestination =
     destinations.find((d) => d.id === selectedRoomId) || fallbackRoom;
 
-  // Quỹ đạo Nav2 phát sáng khi robot đang di chuyển hoặc đang chọn phòng
+  // Quỹ đạo Nav2 thật từ Backend (loại bỏ đường dự phòng tự nối 3 điểm giả lập)
   const plannedPath: MapPlanPoint[] | null = useMemo(() => {
-    // 1. Ưu tiên kế hoạch điều hướng Nav2 thật từ Backend
     if (liveNavPlan && liveNavPlan.length >= 2) {
       return liveNavPlan;
     }
+    return null;
+  }, [liveNavPlan]);
 
-    if (!robotPose) return null;
+  // Realtime Navigation Guidance (tính toán rẽ trái/phải, khoảng cách rẽ & quãng đường còn lại)
+  const guidance: NavigationGuidanceResult | null = useMemo(() => {
+    if (!isEscorting) return null;
+    return computeGuidance({
+      planPoints: plannedPath || [],
+      robotPose,
+      destinationName: selectedRoom.name,
+      speedMps: isPoseLive ? 0.25 : null,
+    });
+  }, [isEscorting, plannedPath, robotPose, selectedRoom.name, isPoseLive]);
 
-    // 2. Tự động vẽ đường dẫn từ vị trí xe AMR đến cửa phòng được chọn
-    const matchEp =
-      endpoints.find(
-        (ep) => ep.endpointCode.toUpperCase() === selectedRoom.roomCode.toUpperCase()
-      ) ||
-      endpoints.find(
-        (ep) => ep.endpointName?.toLowerCase().includes(selectedRoom.name.toLowerCase())
-      ) ||
-      endpoints[0];
+  // Polling theo dõi trạng thái yêu cầu dẫn đường thật từ GET /api/v1/pi/requests/{requestId}
+  useEffect(() => {
+    if (!activeRequestId || !isEscorting) return;
 
-    if (!matchEp || !Number.isFinite(Number(matchEp.xM)) || !Number.isFinite(Number(matchEp.yM))) {
-      return null;
-    }
+    const pollTimer = setInterval(async () => {
+      try {
+        const detail = await robotApiService.getRequestDetail(activeRequestId);
+        if (detail?.status) {
+          setEscortStatus(detail.status);
+          if (detail.status === 'COMPLETED') {
+            clearInterval(pollTimer);
+            setIsEscorting(false);
+            setActiveRequestId(null);
+            Alert.alert(
+              'Đã đến nơi an toàn!',
+              `Robot đã dẫn bạn đến trước cửa ${selectedRoom.name} (${selectedRoom.roomCode}). Chúc bạn khám bệnh thuận lợi!`
+            );
+          } else if (detail.status === 'CANCELLED' || detail.status === 'FAILED') {
+            clearInterval(pollTimer);
+            setIsEscorting(false);
+            setActiveRequestId(null);
+          }
+        }
+      } catch {}
+    }, 2000);
 
-    const startX = robotPose.xM;
-    const startY = robotPose.yM;
-    const endX = Number(matchEp.xM);
-    const endY = Number(matchEp.yM);
-
-    const midX = (startX + endX) / 2;
-    const midY = (startY + endY) / 2 + 0.35;
-
-    return [
-      { xM: startX, yM: startY },
-      { xM: midX, yM: midY },
-      { xM: endX, yM: endY },
-    ];
-  }, [endpoints, liveNavPlan, robotPose, selectedRoom]);
+    return () => {
+      clearInterval(pollTimer);
+    };
+  }, [activeRequestId, isEscorting, selectedRoom]);
 
   // Xử lý yêu cầu Robot dẫn đường (POST /api/v1/pi/requests/escort)
   const handleRequestEscort = async () => {
     setLoadingEscort(true);
-    const reqId = `escort-${Date.now()}`;
-    setActiveRequestId(reqId);
-    setVoiceFeedback(`Robot đang bắt đầu dẫn bạn đến ${selectedRoom.name}...`);
+    setVoiceFeedback(`Đang gửi yêu cầu dẫn bạn đến ${selectedRoom.name}...`);
 
     const matchEp =
       endpoints.find(
@@ -201,60 +213,61 @@ export function PatientHubScreen({ navigation }: Props) {
     const destinationEndpointId =
       matchEp?.endpointId || '049204b7-cd5c-41b8-af99-1cd2797d796c';
 
+    const reqKey = generateUuid();
     try {
-      await robotApiService.requestEscort({
-        mapId: activeMap.mapId || DEFAULT_MAP_ID,
-        destinationEndpointId,
-        destinationRoomId:
-          selectedRoom.id.includes('-') && selectedRoom.id.length === 36
-            ? selectedRoom.id
-            : undefined,
-        targetMode: 'ENDPOINT',
-        escortMode: 'GUIDED',
-        walkingSpeedMps: 0.25,
-        confirmationTimeoutSec: 60,
-        escortNote: `Bệnh nhân yêu cầu dẫn đường đến ${selectedRoom.name}`,
-        priority: 80,
-      });
+      const escortRes = await robotApiService.requestEscort(
+        {
+          mapId: activeMap.mapId || DEFAULT_MAP_ID,
+          destinationEndpointId,
+          destinationRoomId:
+            selectedRoom.id.includes('-') && selectedRoom.id.length === 36
+              ? selectedRoom.id
+              : undefined,
+          targetMode: 'ENDPOINT',
+          escortMode: 'GUIDED',
+          walkingSpeedMps: 0.25,
+          confirmationTimeoutSec: 60,
+          escortNote: `Bệnh nhân yêu cầu dẫn đường đến ${selectedRoom.name}`,
+          priority: 80,
+        },
+        reqKey,
+      );
 
-      await robotApiService.sendHeartbeat('BUSY', batteryPercent * 100, activeMap.mapId);
-    } catch {} finally {
+      const serviceRequestId = escortRes?.request?.serviceRequestId;
+      if (serviceRequestId) {
+        setActiveRequestId(serviceRequestId);
+        setIsEscorting(true);
+        setEscortStatus(escortRes.request?.status || 'SUBMITTED');
+        setVoiceFeedback(`Robot đang bắt đầu dẫn bạn đến ${selectedRoom.name}...`);
+        await robotApiService.sendHeartbeat('BUSY', batteryPercent * 100, activeMap.mapId).catch(() => {});
+      } else {
+        throw new Error('Máy chủ không trả về mã serviceRequestId');
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      Alert.alert('Không thể bắt đầu dẫn đường', msg);
+    } finally {
       setLoadingEscort(false);
-      setIsEscorting(true);
-      setEscortStep(1);
-
-      if (escortIntervalRef.current) clearInterval(escortIntervalRef.current);
-      escortIntervalRef.current = setInterval(() => {
-        setEscortStep((prev) => {
-          if (prev >= 4) {
-            if (escortIntervalRef.current) clearInterval(escortIntervalRef.current);
-            Alert.alert(
-              'Đã đến nơi an toàn!',
-              `Robot đã dẫn bạn đến trước cửa ${selectedRoom.name} (${selectedRoom.roomCode}). Chúc bạn khám bệnh thuận lợi!`,
-              [{ text: 'Hoàn tất', onPress: () => handleCancelEscort() }]
-            );
-            return 4;
-          }
-          return prev + 1;
-        });
-      }, 4000);
     }
   };
 
-  // Dừng dẫn đường
+  // Dừng dẫn đường qua POST /api/v1/pi/requests/{requestId}/cancel
   const handleCancelEscort = async () => {
-    if (escortIntervalRef.current) clearInterval(escortIntervalRef.current);
-    setIsEscorting(false);
-    setEscortStep(0);
-    setVoiceFeedback(null);
-
+    if (!activeRequestId) {
+      setIsEscorting(false);
+      return;
+    }
+    setIsStoppingEscort(true);
     try {
-      if (activeRequestId) {
-        await robotApiService.cancelRequest(activeRequestId, 'Bệnh nhân dừng yêu cầu');
-      }
-      await robotApiService.sendHeartbeat('IDLE', batteryPercent * 100, activeMap.mapId);
-    } catch {} finally {
+      await robotApiService.cancelRequest(activeRequestId, 'Bệnh nhân dừng yêu cầu');
+      await robotApiService.sendHeartbeat('IDLE', batteryPercent * 100, activeMap.mapId).catch(() => {});
+    } catch {
+      // Handled
+    } finally {
+      setIsStoppingEscort(false);
+      setIsEscorting(false);
       setActiveRequestId(null);
+      setVoiceFeedback(null);
     }
   };
 
@@ -367,6 +380,9 @@ export function PatientHubScreen({ navigation }: Props) {
             robotPose={robotPose}
             isPoseLive={isPoseLive}
             plannedPath={plannedPath}
+            guidance={guidance}
+            onStopEscort={handleCancelEscort}
+            isStoppingEscort={isStoppingEscort}
           />
         </View>
       </View>
@@ -475,12 +491,22 @@ export function PatientHubScreen({ navigation }: Props) {
               <Pressable
                 accessibilityRole="button"
                 onPress={handleCancelEscort}
-                style={styles.cancelEscortBtn}
+                disabled={isStoppingEscort}
+                style={[
+                  styles.cancelEscortBtn,
+                  isStoppingEscort && { opacity: 0.7 },
+                ]}
               >
-                <Ionicons name="stop-circle" size={15} color="#FFFFFF" />
-                <AppText style={styles.cancelEscortBtnText}>
-                  Hủy dẫn đường (Bước {escortStep}/4)
-                </AppText>
+                {isStoppingEscort ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="stop-circle" size={15} color="#FFFFFF" />
+                    <AppText style={styles.cancelEscortBtnText}>
+                      Dừng dẫn đường ({escortStatus})
+                    </AppText>
+                  </>
+                )}
               </Pressable>
             ) : (
               <Pressable

@@ -176,6 +176,63 @@ export interface EscortCreateRequest {
   note?: string;
 }
 
+export interface EscortResponse {
+  request: {
+    serviceRequestId: string;
+    requestCode?: string;
+    requestType?: string;
+    status?: string;
+    priority?: number;
+    requestNote?: string;
+    requestedAt?: string;
+  };
+  mapId?: string;
+  originRoomId?: string;
+  destinationRoomId?: string;
+  originEndpointId?: string;
+  destinationEndpointId?: string;
+  destinationGroupId?: string;
+  resolvedEndpointId?: string;
+  targetMode?: string;
+  patientReference?: string;
+  escortMode?: string;
+  walkingSpeedMps?: number;
+  confirmationTimeoutSec?: number;
+  escortNote?: string;
+}
+
+export interface DeviceJobSummary {
+  jobId: string;
+  jobCode?: string;
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+  robotId?: string;
+  errorCode?: string;
+  failureReason?: string;
+  queuedAt?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface DeviceRequestDetailResponse {
+  serviceRequestId: string;
+  requestCode?: string;
+  requestType?: string;
+  status:
+    | 'SUBMITTED'
+    | 'ASSIGNED'
+    | 'DISPATCHED'
+    | 'IN_PROGRESS'
+    | 'COMPLETED'
+    | 'CANCELLED'
+    | 'FAILED';
+  priority?: number;
+  requestNote?: string;
+  requestedAt?: string;
+  cancelledAt?: string;
+  completedAt?: string;
+  jobs?: DeviceJobSummary[];
+}
+
 export interface PageResponse<T> {
   content: T[];
   page: number;

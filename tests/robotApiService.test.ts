@@ -330,4 +330,62 @@ describe('robotApiService', () => {
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://localhost:8080/api/v1/public/hospital-information?page=0&size=5');
   });
+
+  it('requestEscort posts to /api/v1/pi/requests/escort with Idempotency-Key and returns EscortResponse', async () => {
+    const escortRes = {
+      request: {
+        serviceRequestId: 'req-escort-123',
+        status: 'SUBMITTED',
+      },
+      mapId: 'map-01',
+      destinationEndpointId: 'ep-01',
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(escortRes));
+    global.fetch = fetchMock;
+
+    const opKey = 'key-escort-123';
+    const res = await robotApiService.requestEscort(
+      {
+        mapId: 'map-01',
+        destinationEndpointId: 'ep-01',
+      },
+      opKey,
+    );
+
+    expect(res.request.serviceRequestId).toBe('req-escort-123');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/requests/escort');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe(opKey);
+  });
+
+  it('getRequestDetail gets /api/v1/pi/requests/{requestId}', async () => {
+    const detailRes = {
+      serviceRequestId: 'req-escort-123',
+      status: 'IN_PROGRESS' as const,
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(detailRes));
+    global.fetch = fetchMock;
+
+    const res = await robotApiService.getRequestDetail('req-escort-123');
+    expect(res.status).toBe('IN_PROGRESS');
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/requests/req-escort-123');
+  });
+
+  it('cancelRequest posts to /api/v1/pi/requests/{requestId}/cancel with reason', async () => {
+    const cancelRes = {
+      serviceRequestId: 'req-escort-123',
+      status: 'CANCELLED' as const,
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(cancelRes));
+    global.fetch = fetchMock;
+
+    const res = await robotApiService.cancelRequest('req-escort-123', 'Bệnh nhân dừng yêu cầu', 'cancel-op-key');
+    expect(res.status).toBe('CANCELLED');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/requests/req-escort-123/cancel');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe('cancel-op-key');
+  });
 });

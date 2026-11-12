@@ -6,6 +6,8 @@ import {
   DeviceAuthRequest,
   DeviceTokenResponse,
   EscortCreateRequest,
+  EscortResponse,
+  DeviceRequestDetailResponse,
   HeartbeatPayload,
   JobErrorPayload,
   JobResultPayload,
@@ -280,18 +282,40 @@ class RobotApiService {
     });
   }
 
-  public async requestEscort(params: EscortCreateRequest): Promise<unknown> {
-    return apiClient.request('/api/v1/pi/requests/escort', {
+  public async requestEscort(
+    params: EscortCreateRequest,
+    idempotencyKey?: string,
+  ): Promise<EscortResponse> {
+    const key = idempotencyKey || generateUuid();
+    return apiClient.request<EscortResponse>('/api/v1/pi/requests/escort', {
       method: 'POST',
+      headers: {
+        'Idempotency-Key': key,
+      },
       body: params,
     });
   }
 
-  public async cancelRequest(requestId: string, reason = 'Bệnh nhân hủy yêu cầu'): Promise<unknown> {
-    return apiClient.request(`/api/v1/pi/requests/${requestId}/cancel`, {
-      method: 'POST',
-      body: { reason },
-    });
+  public async getRequestDetail(requestId: string): Promise<DeviceRequestDetailResponse> {
+    return apiClient.request<DeviceRequestDetailResponse>(`/api/v1/pi/requests/${requestId}`);
+  }
+
+  public async cancelRequest(
+    requestId: string,
+    reason = 'Bệnh nhân dừng yêu cầu',
+    idempotencyKey?: string,
+  ): Promise<DeviceRequestDetailResponse> {
+    const key = idempotencyKey || generateUuid();
+    return apiClient.request<DeviceRequestDetailResponse>(
+      `/api/v1/pi/requests/${requestId}/cancel`,
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': key,
+        },
+        body: { reason },
+      },
+    );
   }
 
   /**

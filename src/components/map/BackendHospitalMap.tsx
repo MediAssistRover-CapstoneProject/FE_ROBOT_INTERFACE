@@ -19,6 +19,11 @@ import Svg, {
   Text as SvgText,
 } from 'react-native-svg';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { NavigationGuidanceBanner } from './NavigationGuidanceBanner';
+import {
+  NavigationGuidanceResult,
+  guidanceSymbol,
+} from '../../features/navigation/navigationGuidance';
 import {
   analyzeSlamMapGeometry,
   decodePngGrayscale,
@@ -122,6 +127,9 @@ export interface BackendHospitalMapProps {
   isPoseLive?: boolean;
   plannedPath?: MapPlanPoint[] | null;
   customImageUrl?: string;
+  guidance?: NavigationGuidanceResult | null;
+  onStopEscort?: () => void;
+  isStoppingEscort?: boolean;
 }
 
 interface MapPoint {
@@ -181,6 +189,9 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   isPoseLive = false,
   plannedPath,
   customImageUrl,
+  guidance,
+  onStopEscort,
+  isStoppingEscort,
 }) => {
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -822,56 +833,141 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })}
 
-          {/* 2. Đường dẫn Nav2 phát sáng */}
+          {/* 2. Đường dẫn Nav2 phát sáng & Tách chặng theo Guidance */}
           {validPlannedPath && (() => {
-            const polyPoints = validPlannedPath
+            const isTracking =
+              guidance?.state === 'TRACKING' &&
+              guidance.projection &&
+              typeof guidance.segmentIndex === 'number';
+
+            // Đoạn sắp đi (upcoming path)
+            const upcomingPoints: MapPlanPoint[] = isTracking
+              ? [
+                  { xM: guidance.projection!.xM, yM: guidance.projection!.yM },
+                  ...validPlannedPath.slice(guidance.segmentIndex! + 1),
+                ]
+              : validPlannedPath;
+
+            // Đoạn đã đi qua (completed path)
+            const completedPoints: MapPlanPoint[] = isTracking
+              ? [
+                  ...validPlannedPath.slice(0, guidance.segmentIndex! + 1),
+                  { xM: guidance.projection!.xM, yM: guidance.projection!.yM },
+                ]
+              : [];
+
+            const completedPoly = completedPoints
               .map((pt) => {
                 const p = geometry.toViewPixel({ x: Number(pt.xM), y: Number(pt.yM) });
                 return `${p.x},${p.y}`;
               })
               .join(' ');
+
+            const upcomingPoly = upcomingPoints
+              .map((pt) => {
+                const p = geometry.toViewPixel({ x: Number(pt.xM), y: Number(pt.yM) });
+                return `${p.x},${p.y}`;
+              })
+              .join(' ');
+
             const lastPt = validPlannedPath[validPlannedPath.length - 1];
             const endPixel = lastPt ? geometry.toViewPixel({ x: lastPt.xM, y: lastPt.yM }) : null;
+
+            // Điểm rẽ tiếp theo (turn indicator badge trên bản đồ)
+            const turnPixel =
+              guidance?.state === 'TRACKING' && guidance.turn
+                ? geometry.toViewPixel({ x: guidance.turn.xM, y: guidance.turn.yM })
+                : null;
+            const turnBadgeRadius = Math.max(9, viewWidth / 48);
+
             return (
               <G>
-                {/* Hào quang phát sáng cyan rộng */}
+                {/* 2a. Đoạn đường đã đi qua: màu xanh nhạt (#A9BFD8) */}
+                {isTracking && completedPoly.length > 0 && (
+                  <Polyline
+                    points={completedPoly}
+                    fill="none"
+                    stroke="#A9BFD8"
+                    strokeWidth={Math.max(2.4, viewWidth / 110)}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    opacity={0.65}
+                  />
+                )}
+
+                {/* 2b. Đoạn sắp đi: Hào quang phát sáng xanh dương đậm */}
                 <Polyline
-                  points={polyPoints}
+                  points={upcomingPoly}
                   fill="none"
-                  stroke="rgba(14, 165, 233, 0.40)"
-                  strokeWidth={Math.max(4.5, viewWidth / 60)}
+                  stroke="rgba(24, 119, 237, 0.40)"
+                  strokeWidth={Math.max(5.0, viewWidth / 55)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                {/* Đường nét chính màu xanh cyan Nav2 */}
+
+                {/* 2c. Đoạn sắp đi: Đường nét chính màu xanh đậm (#1877ED) */}
                 <Polyline
-                  points={polyPoints}
+                  points={upcomingPoly}
                   fill="none"
-                  stroke="#0EA5E9"
-                  strokeWidth={Math.max(2.2, viewWidth / 120)}
+                  stroke="#1877ED"
+                  strokeWidth={Math.max(2.8, viewWidth / 100)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                {/* Đường nét đứt màu trắng nổi bật ở giữa */}
+
+                {/* 2d. Đường nét đứt màu trắng nổi bật ở giữa */}
                 <Polyline
-                  points={polyPoints}
+                  points={upcomingPoly}
                   fill="none"
                   stroke="#FFFFFF"
-                  strokeWidth={Math.max(1.0, viewWidth / 240)}
-                  strokeDasharray="4,3"
+                  strokeWidth={Math.max(1.1, viewWidth / 220)}
+                  strokeDasharray="5,4"
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
-                {/* Điểm đích đến nhấp nháy trên đường dẫn */}
+
+                {/* 2e. Điểm ghim đích nổi bật (Destination Pin: Đỏ #D94B3D viền trắng) */}
                 {endPixel && (
-                  <Circle
-                    cx={endPixel.x}
-                    cy={endPixel.y}
-                    r={Math.max(3.5, viewWidth / 80)}
-                    fill="none"
-                    stroke="#0EA5E9"
-                    strokeWidth={1.5}
-                  />
+                  <G>
+                    <Circle
+                      cx={endPixel.x}
+                      cy={endPixel.y}
+                      r={Math.max(6.5, viewWidth / 55)}
+                      fill="#D94B3D"
+                      stroke="#FFFFFF"
+                      strokeWidth={2}
+                    />
+                    <Circle
+                      cx={endPixel.x}
+                      cy={endPixel.y}
+                      r={Math.max(2.2, viewWidth / 150)}
+                      fill="#FFFFFF"
+                    />
+                  </G>
+                )}
+
+                {/* 2f. Dấu rẽ ở ngã rẽ tiếp theo (Turn Badge) */}
+                {turnPixel && (
+                  <G>
+                    <Circle
+                      cx={turnPixel.x}
+                      cy={turnPixel.y}
+                      r={turnBadgeRadius}
+                      fill="#075DC4"
+                      stroke="#FFFFFF"
+                      strokeWidth={2}
+                    />
+                    <SvgText
+                      x={turnPixel.x}
+                      y={turnPixel.y + turnBadgeRadius * 0.38}
+                      fill="#FFFFFF"
+                      fontSize={turnBadgeRadius * 1.3}
+                      fontWeight="bold"
+                      textAnchor="middle"
+                    >
+                      {guidanceSymbol(guidance?.direction)}
+                    </SvgText>
+                  </G>
                 )}
               </G>
             );
@@ -1025,6 +1121,15 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })()}
         </Svg>
+
+        {/* Banner chỉ dẫn điều hướng Nav2 (Còn 43 cm, rẽ phải) */}
+        {guidance && guidance.state !== 'IDLE' && (
+          <NavigationGuidanceBanner
+            guidance={guidance}
+            onStop={onStopEscort}
+            isStopping={isStoppingEscort}
+          />
+        )}
 
         {/* HUD 1: Hệ trục tọa độ và vị trí mét */}
         <View style={styles.ottoAxisHud} pointerEvents="none">

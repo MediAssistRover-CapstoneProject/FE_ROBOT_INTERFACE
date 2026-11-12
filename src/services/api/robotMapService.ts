@@ -5,6 +5,7 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
+import { DEFAULT_ROBOT_CODE } from './config';
 import defaultPresentationData from './defaultPresentationMap.json';
 
 export interface PresentationPoint {
@@ -402,22 +403,28 @@ class RobotMapService {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-    // 1. Tự động nhận diện ID robot đang hoạt động trên hệ thống
-    try {
-      const robotsRes = await fetch(`${REMOTE_API_BASE}/robots`, { headers });
-      if (robotsRes.ok) {
-        const robotsData = await robotsRes.json();
-        const list = robotsData?.content || robotsData;
-        if (Array.isArray(list) && list.length > 0) {
-          const busy = list.find((r: any) => r.status === 'BUSY');
-          const idle = list.find((r: any) => r.status === 'IDLE');
-          const selected = busy || idle || list[0];
-          if (selected?.robotId) {
-            cachedActiveRobotId = selected.robotId;
+    // 1. Nhận diện ID robot theo cấu hình cụ thể thay vì chọn ngẫu nhiên
+    const configuredRobotId = (process.env.EXPO_PUBLIC_ROBOT_ID || '').trim();
+    if (configuredRobotId) {
+      cachedActiveRobotId = configuredRobotId;
+    } else {
+      try {
+        const robotsRes = await fetch(`${REMOTE_API_BASE}/robots`, { headers });
+        if (robotsRes.ok) {
+          const robotsData = await robotsRes.json();
+          const list = robotsData?.content || robotsData;
+          if (Array.isArray(list) && list.length > 0) {
+            const matching = list.find(
+              (r: any) => r.robotCode === DEFAULT_ROBOT_CODE || r.robotId === cachedActiveRobotId
+            );
+            const selected = matching || list[0];
+            if (selected?.robotId) {
+              cachedActiveRobotId = selected.robotId;
+            }
           }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     // 2. Lấy Snapshot trực tiếp của Robot (Tọa độ Nav2 + Đường đi Planned Path)
     try {
