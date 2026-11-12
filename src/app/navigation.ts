@@ -4,7 +4,16 @@ export type RootStackParamList = {
   Navigation: { taskId: string };
   Assistant: undefined;
   Information: undefined;
-  Emergency: undefined;
+  Emergency:
+    | {
+        mapId?: string;
+        xM?: number;
+        yM?: number;
+        roomCode?: string;
+        roomName?: string;
+        destinationName?: string;
+      }
+    | undefined;
   Logistics: undefined;
 };
 

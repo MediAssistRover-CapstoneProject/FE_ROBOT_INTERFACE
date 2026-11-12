@@ -29,7 +29,7 @@ class ApiClient {
   }
 
   public getRobotId(): string | null {
-    return this.robotId;
+    return this.robotId || (process.env.EXPO_PUBLIC_ROBOT_ID as string) || null;
   }
 
   public setToken(token: string, robotId?: string, expiresInMs = 3600 * 1000) {
@@ -90,7 +90,7 @@ class ApiClient {
       timeoutMs = 10_000,
     } = options;
 
-    const requestId = generateUuid();
+    const requestId = (headers['X-Request-ID'] as string) || generateUuid();
     const reqHeaders: Record<string, string> = {
       Accept: 'application/json',
       'X-Request-ID': requestId,
@@ -99,7 +99,9 @@ class ApiClient {
 
     if (body !== undefined) {
       reqHeaders['Content-Type'] = 'application/json';
-      reqHeaders['Idempotency-Key'] = requestId;
+      if (!reqHeaders['Idempotency-Key']) {
+        reqHeaders['Idempotency-Key'] = requestId;
+      }
     }
 
     if (requiresAuth) {

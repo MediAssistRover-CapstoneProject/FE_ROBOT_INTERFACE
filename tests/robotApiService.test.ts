@@ -218,6 +218,46 @@ describe('robotApiService', () => {
     expect(url).toBe('http://localhost:8080/api/v1/pi/incidents/sos');
     const body = JSON.parse(init?.body as string);
     expect(body.payload.description).toBe('Bệnh nhân ngất xỉu');
+    expect(body.payload.xM).toBe(10);
+    expect(body.payload.yM).toBe(20);
+  });
+
+  it('triggerSos preserves stable operationKey and sets Idempotency-Key header', async () => {
+    const sosRes = {
+      incident: { incidentId: 'INC_REAL_123', status: 'REPORTED' as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sosRes));
+    global.fetch = fetchMock;
+
+    const opKey = 'custom-op-key-abc';
+    await robotApiService.triggerSos('Cần hỗ trợ', 'CRITICAL', undefined, undefined, undefined, opKey);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['Idempotency-Key']).toBe(opKey);
+
+    const body = JSON.parse(init?.body as string);
+    expect(body.operationKey).toBe(opKey);
+    expect(body.payload.xM).toBeUndefined();
+    expect(body.payload.yM).toBeUndefined();
+    expect(body.payload.mapId).toBeUndefined();
+  });
+
+  it('getIncidentStatus queries GET /api/v1/pi/incidents/{id}', async () => {
+    const statusRes = {
+      incidentId: 'INC_REAL_123',
+      status: 'ACKNOWLEDGED' as const,
+      description: 'Cần hỗ trợ',
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(statusRes));
+    global.fetch = fetchMock;
+
+    const res = await robotApiService.getIncidentStatus('INC_REAL_123');
+    expect(res.status).toBe('ACKNOWLEDGED');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/incidents/INC_REAL_123');
+    expect(init?.method).toBe('GET');
   });
 
   it('reportJobStarted posts envelope to /api/v1/pi/jobs/:jobId/started', async () => {

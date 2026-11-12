@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
@@ -12,32 +11,47 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../app/navigation';
 import { AppText } from '../../components/ui';
 import { AudioWaveform } from '../../components/AudioWaveform';
-import { colors } from '../../theme';
 import { robotApiService } from '../../services/api';
 import { DeviceIncidentStatusResponse } from '../../services/api/types';
 import { generateUuid } from '../../services/api/config';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Emergency'>;
 
-type SosCallState = 'INITIATING' | 'CALLING' | 'ACKNOWLEDGED' | 'RESPONDING';
+export type SosCallState =
+  | 'INITIALIZING'
+  | 'SENDING'
+  | 'SENT_WAITING'
+  | 'ACKNOWLEDGED'
+  | 'IN_PROGRESS'
+  | 'RESOLVED'
+  | 'CLOSED'
+  | 'FALSE_ALARM'
+  | 'FAILED';
 
-export function SosCallScreen({ navigation }: Props) {
+export function SosCallScreen({ route, navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const { mapId, xM, yM, roomCode, roomName } = route.params || {};
+
   const [callSeconds, setCallSeconds] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
 
-  // Trạng thái cuộc gọi & Phản hồi từ Điều dưỡng
-  const [sosState, setSosState] = useState<SosCallState>('INITIATING');
-  const [incidentId, setIncidentId] = useState<string>(generateUuid());
-  const [staffInfo, setStaffInfo] = useState({
-    name: 'Phòng Điều dưỡng Trực',
-    role: 'Khoa Cấp cứu / Hồi sức tích cực',
-    statusText: 'Đang kết nối trung tâm cấp cứu...',
-    eta: '~1-2 phút',
-  });
+  // 1. Quản lý vòng đời SOS thật với Backend
+  const [sosState, setSosState] = useState<SosCallState>('INITIALIZING');
+  const [incidentId, setIncidentId] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
 
-  // Nhật ký Live API Telemetry
+  // Stable operationKey cho toàn bộ phiên SOS (tái sử dụng khi bấm Thử lại)
+  const operationKeyRef = useRef<string>(generateUuid());
+  const hasTriggeredRef = useRef(false);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Tọa độ định vị thực tế
+  const hasValidCoords =
+    typeof xM === 'number' && !isNaN(xM) && typeof yM === 'number' && !isNaN(yM);
+
+  // Telemetry Console Inspector
   const [showApiConsole, setShowApiConsole] = useState(false);
   const [apiLogs, setApiLogs] = useState<{
     lastCall: string;
@@ -46,83 +60,91 @@ export function SosCallScreen({ navigation }: Props) {
     latencyMs: number;
   }>({
     lastCall: 'POST /api/v1/pi/incidents/sos',
-    lastResult: 'Khởi tạo báo động khẩn cấp...',
-    status: 'PENDING',
+    lastResult: 'Chuẩn bị gửi tín hiệu cấp cứu SOS...',
+    status: 'READY',
     latencyMs: 0,
   });
 
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // 2. Hàm gửi SOS tới BE với envelope EMERGENCY_SOS và operationKey ổn định
+  const sendSosRequest = async () => {
+    setIsRetrying(true);
+    setErrorMessage(null);
+    setSosState('SENDING');
+    const start = Date.now();
 
-  // 1. Tự động gọi POST /api/v1/pi/incidents/sos khi màn hình mở ra
-  useEffect(() => {
-    let alive = true;
+    const desc = roomCode
+      ? `Bệnh nhân gọi cấp cứu SOS tại sảnh (${roomCode})`
+      : 'Bệnh nhân yêu cầu trợ giúp y tế khẩn cấp tại trạm Robot';
 
-    async function triggerSosApi() {
-      const start = Date.now();
-      try {
-        const res = await robotApiService.triggerSos(
-          'Bệnh nhân yêu cầu trợ giúp y tế khẩn cấp tại Trạm Robot (Khu Chờ A)',
-          'CRITICAL',
-          14.2,
-          5.8,
-          'dee53b44-a8ef-446a-947e-c42aa14ce9c2'
-        );
+    try {
+      const res = await robotApiService.triggerSos(
+        desc,
+        'CRITICAL',
+        hasValidCoords ? xM : undefined,
+        hasValidCoords ? yM : undefined,
+        hasValidCoords && mapId ? mapId : undefined,
+        operationKeyRef.current,
+      );
 
-        const latency = Date.now() - start;
-        const assignedId = res?.incident?.incidentId || generateUuid();
+      const latency = Date.now() - start;
+      const assignedId = res?.incident?.incidentId;
 
-        if (alive) {
-          setIncidentId(assignedId);
-          setSosState('CALLING');
-          setStaffInfo((prev) => ({
-            ...prev,
-            statusText: 'Đang đổ chuông phòng trực điều dưỡng...',
-          }));
-          setApiLogs({
-            lastCall: 'POST /api/v1/pi/incidents/sos',
-            lastResult: JSON.stringify(res || { status: 'SOS_REGISTERED', incidentId: assignedId }),
-            status: '200 OK',
-            latencyMs: latency,
-          });
-        }
-      } catch (err) {
-        // Chế độ Hybrid: Nếu deviceSecret chưa rotate (401), xử lý an toàn mà không văng app
-        if (alive) {
-          const fallbackId = generateUuid();
-          setIncidentId(fallbackId);
-          setSosState('CALLING');
-          setStaffInfo((prev) => ({
-            ...prev,
-            statusText: 'Đang đổ chuông phòng trực điều dưỡng (Hybrid)...',
-          }));
-          setApiLogs({
-            lastCall: 'POST /api/v1/pi/incidents/sos',
-            lastResult: `Hybrid Fallback: Đã kích hoạt báo động khẩn cấp nội bộ (${err instanceof Error ? err.message : String(err)})`,
-            status: '401 Handled',
-            latencyMs: Date.now() - start,
-          });
-        }
+      if (!assignedId) {
+        throw new Error('Máy chủ không trả về mã sự cố incidentId hợp lệ');
       }
+
+      setIncidentId(assignedId);
+      setSosState('SENT_WAITING');
+      setApiLogs({
+        lastCall: 'POST /api/v1/pi/incidents/sos',
+        lastResult: JSON.stringify(res),
+        status: '200 OK',
+        latencyMs: latency,
+      });
+    } catch (err: unknown) {
+      const latency = Date.now() - start;
+      const msg = err instanceof Error ? err.message : String(err);
+      setSosState('FAILED');
+      setErrorMessage(msg);
+      setApiLogs({
+        lastCall: 'POST /api/v1/pi/incidents/sos',
+        lastResult: `Lỗi gửi SOS: ${msg}`,
+        status: 'FAILED',
+        latencyMs: latency,
+      });
+    } finally {
+      setIsRetrying(false);
     }
+  };
 
-    triggerSosApi();
-
-    return () => {
-      alive = false;
-    };
+  // 3. Tự động gửi SOS một lần duy nhất khi mount
+  useEffect(() => {
+    if (hasTriggeredRef.current) return;
+    hasTriggeredRef.current = true;
+    sendSosRequest();
   }, []);
 
-  // 2. Bộ đếm thời gian cuộc gọi & Lắng nghe phản hồi từ điều dưỡng qua GET /api/v1/pi/incidents/{incidentId}
+  // 4. Timer đếm giây cuộc gọi
   useEffect(() => {
-    // Timer đếm giây
     const timer = setInterval(() => {
       setCallSeconds((prev) => prev + 1);
     }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-    // Polling GET /api/v1/pi/incidents/{incidentId} mỗi 3 giây
+  // 5. Polling kiểm tra trạng thái Incident thật từ GET /api/v1/pi/incidents/{incidentId}
+  useEffect(() => {
+    if (!incidentId) return;
+    if (
+      sosState === 'RESOLVED' ||
+      sosState === 'CLOSED' ||
+      sosState === 'FALSE_ALARM'
+    ) {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      return;
+    }
+
     pollIntervalRef.current = setInterval(async () => {
-      if (!incidentId) return;
-
       const start = Date.now();
       try {
         const statusRes: DeviceIncidentStatusResponse =
@@ -135,54 +157,38 @@ export function SosCallScreen({ navigation }: Props) {
           latencyMs: Date.now() - start,
         });
 
-        if (statusRes.status === 'ACKNOWLEDGED' || statusRes.status === 'RESOLVED') {
+        const s = statusRes.status;
+        if (s === 'OPEN' || s === 'REPORTED') {
+          setSosState('SENT_WAITING');
+        } else if (s === 'ACKNOWLEDGED') {
           setSosState('ACKNOWLEDGED');
-          setStaffInfo({
-            name: 'ĐD. Trần Thị Lan',
-            role: 'Điều dưỡng trực - Đội phản ứng nhanh',
-            statusText: 'Đã nhận máy • Đang di chuyển cứu hộ',
-            eta: '~45 giây',
-          });
+        } else if (s === 'IN_PROGRESS') {
+          setSosState('IN_PROGRESS');
+        } else if (s === 'RESOLVED') {
+          setSosState('RESOLVED');
+        } else if (s === 'CLOSED') {
+          setSosState('CLOSED');
+        } else if (s === 'FALSE_ALARM') {
+          setSosState('FALSE_ALARM');
         }
-      } catch (err) {
-        // Hybrid mode simulation khi đang test offline hoặc backend chưa rotate secret
+      } catch (err: unknown) {
         setApiLogs((prev) => ({
           ...prev,
           lastCall: `GET /api/v1/pi/incidents/${incidentId.slice(0, 8)}...`,
-          lastResult: `Hybrid Polling: ${err instanceof Error ? err.message : String(err)}`,
-          status: 'POLLING',
+          lastResult: `Polling error: ${err instanceof Error ? err.message : String(err)}`,
+          status: 'POLL_ERR',
         }));
       }
-    }, 3000);
+    }, 2500);
 
     return () => {
-      clearInterval(timer);
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [incidentId]);
+  }, [incidentId, sosState]);
 
-  // Tự động mô phỏng điều dưỡng nhận máy sau 5 giây (để đảm bảo kịch bản demo luôn trực quan)
-  useEffect(() => {
-    if (callSeconds >= 5 && sosState === 'CALLING') {
-      setSosState('ACKNOWLEDGED');
-      setStaffInfo({
-        name: 'ĐD. Trần Thị Lan',
-        role: 'Điều dưỡng trực - Đội phản ứng nhanh',
-        statusText: 'Đã tiếp nhận yêu cầu • Đang đến vị trí Robot',
-        eta: '~45 giây',
-      });
-      setApiLogs((prev) => ({
-        ...prev,
-        lastCall: `GET /api/v1/pi/incidents/${incidentId.slice(0, 8)}...`,
-        lastResult: 'ACKNOWLEDGED: Điều dưỡng Trần Thị Lan đã bấm nhận tín hiệu cứu hộ.',
-        status: 'ACKNOWLEDGED',
-      }));
-    }
-  }, [callSeconds, sosState, incidentId]);
-
+  // Thoát màn hình SOS - KHÔNG gửi heartbeat IDLE theo tài liệu bàn giao
   const handleEndCall = () => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    robotApiService.sendHeartbeat('IDLE').catch(() => {});
     navigation.goBack();
   };
 
@@ -192,13 +198,96 @@ export function SosCallScreen({ navigation }: Props) {
     return `${mins}:${secs}`;
   };
 
+  // Chi tiết hiển thị tương ứng trạng thái thực tế
+  const getDisplayDetails = () => {
+    switch (sosState) {
+      case 'INITIALIZING':
+      case 'SENDING':
+        return {
+          title: 'Đang kết nối trung tâm cấp cứu...',
+          subtitle: 'Phát tín hiệu SOS đến trạm điều dưỡng trực',
+          badgeText: 'Đang gửi tín hiệu...',
+          badgeColor: '#F59E0B',
+          isWorking: true,
+          statusText: 'Đang phát tín hiệu SOS...',
+        };
+      case 'SENT_WAITING':
+        return {
+          title: 'Đã gửi SOS · Chờ nhân viên tiếp nhận',
+          subtitle: 'Tín hiệu đã tới máy chủ. Đang chờ nhân viên trực bấm nhận.',
+          badgeText: 'Đã gửi SOS (Chờ tiếp nhận)',
+          badgeColor: '#38BDF8',
+          isWorking: true,
+          statusText: 'Đang chờ nhân viên y tế tiếp nhận máy...',
+        };
+      case 'ACKNOWLEDGED':
+        return {
+          title: 'Nhân viên y tế đã tiếp nhận',
+          subtitle: 'Điều dưỡng trực đã nhận tín hiệu · Đang chuẩn bị hỗ trợ',
+          badgeText: 'Đã tiếp nhận (200 OK)',
+          badgeColor: '#10B981',
+          isWorking: false,
+          statusText: 'Nhân viên y tế đã tiếp nhận hỗ trợ',
+        };
+      case 'IN_PROGRESS':
+        return {
+          title: 'Đang xử lý sự cố tại hiện trường',
+          subtitle: 'Đội cấp cứu đang xử lý sự cố cứu hộ tại vị trí robot',
+          badgeText: 'Đang xử lý',
+          badgeColor: '#10B981',
+          isWorking: false,
+          statusText: 'Nhân viên đang trực tiếp xử lý',
+        };
+      case 'RESOLVED':
+        return {
+          title: 'Sự cố đã được xử lý hoàn tất',
+          subtitle: 'Quy trình cứu hộ đã hoàn thành an toàn',
+          badgeText: 'Đã hoàn tất',
+          badgeColor: '#10B981',
+          isWorking: false,
+          statusText: 'Đã xử lý xong',
+        };
+      case 'CLOSED':
+        return {
+          title: 'Hồ sơ sự cố đã đóng',
+          subtitle: 'Sự cố SOS đã kết thúc',
+          badgeText: 'Đã đóng',
+          badgeColor: '#64748B',
+          isWorking: false,
+          statusText: 'Hồ sơ đã đóng',
+        };
+      case 'FALSE_ALARM':
+        return {
+          title: 'Báo động giả đã được hủy',
+          subtitle: 'Nhân viên trực đã xác nhận sự cố báo động nhầm và đóng hồ sơ',
+          badgeText: 'Báo động giả',
+          badgeColor: '#94A3B8',
+          isWorking: false,
+          statusText: 'Báo động giả đã hủy',
+        };
+      case 'FAILED':
+        return {
+          title: 'Gửi tín hiệu SOS thất bại',
+          subtitle: errorMessage || 'Không thể kết nối đến máy chủ cấp cứu',
+          badgeText: 'Gửi lỗi (Thử lại)',
+          badgeColor: '#EF4444',
+          isWorking: false,
+          statusText: 'Lỗi gửi tín hiệu cấp cứu',
+        };
+    }
+  };
+
+  const display = getDisplayDetails();
+  const isCallConnected =
+    sosState === 'ACKNOWLEDGED' || sosState === 'IN_PROGRESS';
+
   return (
     <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
       {/* 1. Top Header Row & Live Console Pill */}
       <View style={styles.topHeader}>
         <View style={styles.sosBadge}>
           <View style={styles.redDot} />
-          <AppText style={styles.sosBadgeText}>SOS KHẨN CẤP • MAR-GAZEBO-01</AppText>
+          <AppText style={styles.sosBadgeText}>SOS KHẨN CẤP · ROBOT AMR</AppText>
         </View>
 
         <Pressable
@@ -209,12 +298,10 @@ export function SosCallScreen({ navigation }: Props) {
           <View
             style={[
               styles.statusDot,
-              { backgroundColor: sosState === 'ACKNOWLEDGED' ? '#10B981' : '#F59E0B' },
+              { backgroundColor: display.badgeColor },
             ]}
           />
-          <AppText style={styles.apiStatusPillText}>
-            {sosState === 'ACKNOWLEDGED' ? 'Đã tiếp nhận (200 OK)' : 'Đang phát tín hiệu SOS'}
-          </AppText>
+          <AppText style={styles.apiStatusPillText}>{display.badgeText}</AppText>
           <Ionicons name={showApiConsole ? 'chevron-up' : 'chevron-down'} size={12} color="#94A3B8" />
         </Pressable>
       </View>
@@ -224,15 +311,15 @@ export function SosCallScreen({ navigation }: Props) {
         <View style={styles.apiConsoleBox}>
           <View style={styles.apiConsoleHeader}>
             <Ionicons name="radio-outline" size={14} color="#EF4444" />
-            <AppText style={styles.apiConsoleTitle}>LOCAL API INCIDENTS SOS TELEMETRY</AppText>
-          </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>MÁY CHỦ:</AppText>
-            <AppText style={styles.apiValue}>Local Backend (http://localhost:8080)</AppText>
+            <AppText style={styles.apiConsoleTitle}>LIVE INCIDENTS SOS TELEMETRY</AppText>
           </View>
           <View style={styles.apiRow}>
             <AppText style={styles.apiLabel}>MÃ SỰ CỐ:</AppText>
-            <AppText style={styles.apiValue}>{incidentId}</AppText>
+            <AppText style={styles.apiValue}>{incidentId || 'Chưa nhận'}</AppText>
+          </View>
+          <View style={styles.apiRow}>
+            <AppText style={styles.apiLabel}>OP KEY:</AppText>
+            <AppText style={styles.apiValue}>{operationKeyRef.current}</AppText>
           </View>
           <View style={styles.apiRow}>
             <AppText style={styles.apiLabel}>ENDPOINT:</AppText>
@@ -245,12 +332,6 @@ export function SosCallScreen({ navigation }: Props) {
             </AppText>
           </View>
           <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>PAYLOAD GỬI:</AppText>
-            <AppText style={styles.apiValue}>
-              {`{ xM: 14.2, yM: 5.8, severity: "CRITICAL", map: "Khu chờ A" }`}
-            </AppText>
-          </View>
-          <View style={styles.apiRow}>
             <AppText style={styles.apiLabel}>PHẢN HỒI:</AppText>
             <AppText style={styles.apiRes} numberOfLines={2}>
               {apiLogs.lastResult}
@@ -259,76 +340,103 @@ export function SosCallScreen({ navigation }: Props) {
         </View>
       )}
 
-      {/* 3. Main Calling Content */}
+      {/* 3. Main Center Content */}
       <View style={styles.centerContainer}>
-        {/* Concentric Glowing Rings Avatar */}
+        {/* Concentric Rings */}
         <View
           style={[
             styles.outerRing,
-            sosState === 'ACKNOWLEDGED' && { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.1)' },
+            isCallConnected && { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.1)' },
+            sosState === 'FAILED' && { borderColor: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.15)' },
           ]}
         >
           <View
             style={[
               styles.middleRing,
-              sosState === 'ACKNOWLEDGED' && { borderColor: '#34D399', backgroundColor: 'rgba(52, 211, 153, 0.2)' },
+              isCallConnected && { borderColor: '#34D399', backgroundColor: 'rgba(52, 211, 153, 0.2)' },
+              sosState === 'FAILED' && { borderColor: '#DC2626', backgroundColor: 'rgba(220, 38, 38, 0.25)' },
             ]}
           >
             <View style={styles.avatarCircle}>
-              {sosState === 'INITIATING' ? (
+              {display.isWorking ? (
                 <ActivityIndicator size="large" color="#EF4444" />
               ) : (
                 <Ionicons
-                  name={sosState === 'ACKNOWLEDGED' ? 'medkit' : 'person'}
+                  name={isCallConnected ? 'medkit' : sosState === 'FAILED' ? 'alert-circle' : 'person'}
                   size={52}
-                  color={sosState === 'ACKNOWLEDGED' ? '#059669' : '#0F4C81'}
+                  color={isCallConnected ? '#059669' : sosState === 'FAILED' ? '#EF4444' : '#0F4C81'}
                 />
               )}
             </View>
           </View>
         </View>
 
-        {/* Staff Identity */}
-        <AppText style={styles.staffName}>{staffInfo.name}</AppText>
-        <AppText style={styles.staffRole}>{staffInfo.role}</AppText>
+        {/* Dynamic Title & Subtitle */}
+        <AppText style={styles.staffName}>{display.title}</AppText>
+        <AppText style={styles.staffRole}>{display.subtitle}</AppText>
 
-        {/* Calling Status with Wave */}
-        <View style={styles.statusBox}>
-          <AppText
-            style={[
-              styles.callingStatusText,
-              sosState === 'ACKNOWLEDGED' && { color: '#34D399' },
-            ]}
-          >
-            {staffInfo.statusText}
-          </AppText>
-          <View style={styles.waveWrap}>
-            <AudioWaveform
-              color={sosState === 'ACKNOWLEDGED' ? '#10B981' : '#F59E0B'}
-              count={18}
-              height={18}
-            />
+        {/* Calling Status with Wave or Error Retry */}
+        {sosState === 'FAILED' ? (
+          <View style={styles.failedContainer}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={sendSosRequest}
+              disabled={isRetrying}
+              style={({ pressed }) => [
+                styles.retryButton,
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+              ]}
+            >
+              {isRetrying ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <Ionicons name="refresh" size={18} color="#FFFFFF" />
+                  <AppText style={styles.retryButtonText}>Thử lại ngay</AppText>
+                </>
+              )}
+            </Pressable>
           </View>
-        </View>
+        ) : (
+          <View style={styles.statusBox}>
+            <AppText
+              style={[
+                styles.callingStatusText,
+                isCallConnected && { color: '#34D399' },
+              ]}
+            >
+              {display.statusText}
+            </AppText>
+            <View style={styles.waveWrap}>
+              <AudioWaveform
+                color={isCallConnected ? '#10B981' : '#F59E0B'}
+                count={18}
+                height={18}
+              />
+            </View>
+          </View>
+        )}
 
-        {/* Real-time Tọa độ & Trạng thái Cấp cứu */}
+        {/* Real-time Tọa độ định vị */}
         <View style={styles.locationNotice}>
           <Ionicons name="navigate-circle" size={16} color="#38BDF8" />
           <AppText style={styles.locationNoticeText}>
-            Tọa độ Robot: X: 14.2m · Y: 5.8m · Sảnh Khu chờ Tầng 1 (Live GPS)
+            {hasValidCoords
+              ? `Tọa độ Robot: X: ${xM.toFixed(2)}m · Y: ${yM.toFixed(2)}m${roomName ? ` · ${roomName}` : ''}`
+              : 'Chưa có tọa độ định vị chính xác'}
           </AppText>
         </View>
 
-        {/* Alert Pill: Đang đến cứu hộ */}
-        {sosState === 'ACKNOWLEDGED' && (
+        {/* Card thông báo khi đã tiếp nhận */}
+        {isCallConnected && (
           <View style={styles.nurseArrivingCard}>
-            <Ionicons name="bicycle-outline" size={20} color="#10B981" />
+            <Ionicons name="checkmark-circle" size={20} color="#10B981" />
             <View style={{ flex: 1 }}>
               <AppText style={styles.nurseArrivingTitle}>
-                ĐIỀU DƯỠNG ĐANG ĐẾN VỊ TRÍ ROBOT
+                NHÂN VIÊN Y TẾ ĐÃ TIẾP NHẬN SỰ CỐ
               </AppText>
               <AppText style={styles.nurseArrivingSub}>
-                Dự kiến tiếp cận: {staffInfo.eta} · Bệnh nhân vui lòng giữ nguyên vị trí
+                Bệnh nhân vui lòng giữ nguyên vị trí cạnh robot. Trợ giúp y tế đang được triển khai.
               </AppText>
             </View>
           </View>
@@ -342,16 +450,18 @@ export function SosCallScreen({ navigation }: Props) {
             <View
               style={[
                 styles.orangeDot,
-                sosState === 'ACKNOWLEDGED' && { backgroundColor: '#10B981' },
+                isCallConnected && { backgroundColor: '#10B981' },
+                sosState === 'FAILED' && { backgroundColor: '#EF4444' },
               ]}
             />
             <AppText
               style={[
                 styles.waitingTimerText,
-                sosState === 'ACKNOWLEDGED' && { color: '#34D399' },
+                isCallConnected && { color: '#34D399' },
+                sosState === 'FAILED' && { color: '#EF4444' },
               ]}
             >
-              {sosState === 'ACKNOWLEDGED' ? 'Đang đàm thoại :' : 'Thời gian chờ máy :'} {formatTimer(callSeconds)}
+              {isCallConnected ? 'Đã tiếp nhận :' : 'Thời gian chờ :'} {formatTimer(callSeconds)}
             </AppText>
           </View>
           <AppText style={styles.hintCloseText}>Nhấn nút đỏ để kết thúc</AppText>
@@ -564,33 +674,60 @@ const styles = StyleSheet.create({
   },
   staffName: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.3,
+    textAlign: 'center',
+    paddingHorizontal: 12,
   },
   staffRole: {
     color: '#94A3B8',
     fontSize: 13,
     fontWeight: '500',
+    textAlign: 'center',
+    paddingHorizontal: 16,
   },
   statusBox: {
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 10,
     gap: 6,
   },
   callingStatusText: {
     color: '#F59E0B',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   waveWrap: {
     marginTop: 4,
   },
+  failedContainer: {
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 22,
+    shadowColor: '#DC2626',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   locationNotice: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 14,
+    marginTop: 12,
     backgroundColor: 'rgba(30, 58, 95, 0.6)',
     paddingHorizontal: 12,
     paddingVertical: 6,

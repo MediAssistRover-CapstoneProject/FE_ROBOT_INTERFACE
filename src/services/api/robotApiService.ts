@@ -1,5 +1,6 @@
 import { apiClient } from './client';
 import { createPiEnvelope } from './envelope';
+import { generateUuid } from './config';
 import {
   AckResponse,
   DeviceAuthRequest,
@@ -135,20 +136,27 @@ class RobotApiService {
     const token = await apiClient.ensureDeviceToken();
     const robotId = apiClient.getRobotId();
     if (!token || !robotId) throw new Error('Robot chưa xác thực được với máy chủ.');
+    const hasValidCoords =
+      typeof xM === 'number' && !isNaN(xM) && typeof yM === 'number' && !isNaN(yM);
+    const validMapId = hasValidCoords && mapId ? mapId : undefined;
     const payload: SosPayload = {
-      mapId,
+      mapId: validMapId,
       endpointId: undefined,
       severity,
       description,
-      xM,
-      yM,
+      xM: hasValidCoords ? xM : undefined,
+      yM: hasValidCoords ? yM : undefined,
     };
+    const opKey = operationKey || generateUuid();
     const envelope = createPiEnvelope('EMERGENCY_SOS', payload, {
       robotId,
-      operationKey,
+      operationKey: opKey,
     });
     return apiClient.request<SosResponse>('/api/v1/pi/incidents/sos', {
       method: 'POST',
+      headers: {
+        'Idempotency-Key': opKey,
+      },
       body: envelope,
     });
   }

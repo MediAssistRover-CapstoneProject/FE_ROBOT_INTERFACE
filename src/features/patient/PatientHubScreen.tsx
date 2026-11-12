@@ -271,24 +271,23 @@ export function PatientHubScreen({ navigation }: Props) {
     }
   };
 
-  // Bấm nút Cấp cứu khẩn cấp (SOS)
-  const handleEmergencySos = async () => {
-    setIsTriggeringSos(true);
-    setVoiceFeedback('ĐÃ PHÁT TÍN HIỆU CẤP CỨU SOS ĐẾN TRẠM ĐIỀU DƯỠNG!');
-    try {
-      await robotApiService.triggerSos(
-        `Bệnh nhân gọi cấp cứu SOS tại sảnh (${selectedRoom.roomCode})`,
-        'CRITICAL',
-        robotPose?.xM || 0.15,
-        robotPose?.yM || -0.26,
-        activeMap.mapId || DEFAULT_MAP_ID
-      );
-    } catch {
-      // Ignored
-    } finally {
-      setIsTriggeringSos(false);
-      navigation.navigate('Emergency');
-    }
+  // Bấm nút Cấp cứu khẩn cấp (SOS): Chỉ điều hướng sang màn hình Emergency, không gửi request từ đây
+  const handleEmergencySos = () => {
+    const hasValidCoords =
+      robotPose &&
+      typeof robotPose.xM === 'number' &&
+      !isNaN(robotPose.xM) &&
+      typeof robotPose.yM === 'number' &&
+      !isNaN(robotPose.yM);
+
+    navigation.navigate('Emergency', {
+      mapId: hasValidCoords && activeMap?.mapId ? activeMap.mapId : undefined,
+      xM: hasValidCoords ? robotPose.xM : undefined,
+      yM: hasValidCoords ? robotPose.yM : undefined,
+      roomCode: selectedRoom?.roomCode,
+      roomName: selectedRoom?.name,
+      destinationName: selectedRoom?.name,
+    });
   };
 
   // Khi bấm trực tiếp vào một Endpoint hoặc Room trên bản đồ
