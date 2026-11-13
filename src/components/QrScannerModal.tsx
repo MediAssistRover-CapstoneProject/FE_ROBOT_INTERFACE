@@ -1,28 +1,24 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+  ScrollView,
+} from 'react-native';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { colors, radii } from '../theme';
-
-/**
- * Camera quét mã QR trên điện thoại Staff.
- *
- * Luồng:  Staff mở app → hiện QR dạng `MARSTAFF1.{64-char-proof}`
- *   →  Robot mở camera quét → gửi `proof` lên BE qua
- *         POST /api/v1/pi/jobs/{jobId}/staff-phone-qr/verify
- *   →  BE xác thực chữ ký, mở chốt tủ.
- */
+import { AppText, Button, Card, Notice } from './ui';
+import { colors, radii, spacing, typography } from '../theme';
 
 export type ScanState = 'scanning' | 'verifying' | 'verified' | 'error';
 
 interface Props {
-  /** Tiêu đề phía trên camera, ví dụ 'QR Người gửi' */
   title: string;
-  /** Gợi ý bên dưới, ví dụ 'Job abc123 · Lấy hàng tại A' */
   subtitle?: string;
-  /** Được gọi khi quét thành công 1 mã. Trả về Promise → nếu reject → hiện lỗi. */
   onScan: (rawPayload: string) => Promise<void>;
-  /** Đóng modal */
   onClose: () => void;
 }
 
@@ -33,9 +29,14 @@ export function QrScannerModal({ title, subtitle, onScan, onClose }: Props) {
   const locked = useRef(false);
   const mounted = useRef(true);
 
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height && width > 700;
+
   useEffect(() => {
     mounted.current = true;
-    return () => { mounted.current = false; };
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
   const handleBarcode = async ({ data }: BarcodeScanningResult) => {
@@ -53,131 +54,279 @@ export function QrScannerModal({ title, subtitle, onScan, onClose }: Props) {
     }
   };
 
-  const close = () => { if (state !== 'verifying') onClose(); };
+  const close = () => {
+    if (state !== 'verifying') onClose();
+  };
+
+  // Tính toán kích thước camera an toàn cho tablet
+  const cameraMaxHeight = Math.min(320, Math.round(height * 0.58));
+  const cameraMaxWidth = Math.min(380, Math.round(width * 0.45));
 
   return (
-    <Modal visible animationType="slide" onRequestClose={close}>
-      <View style={styles.root}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Ionicons name="scan-outline" size={22} color="#0EA5E9" />
-            <View style={styles.headerText}>
-              <Text style={styles.title}>{title}</Text>
-              {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
-            </View>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Đóng"
-            onPress={close}
-            disabled={state === 'verifying'}
-            style={styles.close}
-          >
-            <Ionicons name="close" size={22} color="#CBD5E1" />
-          </Pressable>
-        </View>
-
-        {/* Camera viewport */}
-        {state === 'scanning' && permission?.granted ? (
-          <>
-            <View style={styles.camera}>
-              <CameraView
-                style={StyleSheet.absoluteFill}
-                facing="back"
-                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                onBarcodeScanned={handleBarcode}
-              />
-              {/* Khung ngắm */}
-              <View pointerEvents="none" style={styles.frame}>
-                <Ionicons name="scan" size={34} color="rgba(255,255,255,0.85)" />
+    <Modal visible animationType="fade" transparent onRequestClose={close}>
+      <View style={styles.backdrop}>
+        <View
+          style={[
+            styles.modalContainer,
+            isLandscape && styles.modalContainerLandscape,
+          ]}
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <View style={styles.headerLeft}>
+              <View style={styles.headerIconCircle}>
+                <Ionicons name="camera" size={20} color={colors.textPrimary} />
+              </View>
+              <View style={styles.headerText}>
+                <AppText variant="heading" style={styles.titleText}>{title}</AppText>
+                {!!subtitle && (
+                  <AppText variant="caption" style={styles.subtitleText}>{subtitle}</AppText>
+                )}
               </View>
             </View>
-            <Text style={styles.hint}>
-              Đưa mã QR trên điện thoại nhân viên y tế vào khung ngắm.
-            </Text>
-          </>
-        ) : (
-          <View style={styles.center}>
-            {state === 'scanning' && (
-              <>
-                <Ionicons name="camera-outline" size={38} color="#64748B" />
-                <Text style={styles.hint}>Cho phép robot sử dụng camera để quét mã QR nhân viên.</Text>
-                {permission?.canAskAgain !== false ? (
-                  <Pressable style={styles.btn} onPress={() => void requestPermission()}>
-                    <Text style={styles.btnText}>Cấp quyền camera</Text>
-                  </Pressable>
-                ) : (
-                  <Text style={styles.hint}>Mở Cài đặt ứng dụng để cấp quyền camera.</Text>
-                )}
-              </>
-            )}
-
-            {state === 'verifying' && (
-              <>
-                <ActivityIndicator color={colors.primary} size="large" />
-                <Text style={styles.hint}>Đang xác thực mã QR với hệ thống…</Text>
-              </>
-            )}
-
-            {state === 'verified' && (
-              <>
-                <Ionicons name="checkmark-circle" size={48} color={colors.success} />
-                <Text style={styles.title}>Xác thực thành công</Text>
-                <Text style={styles.hint}>
-                  Hệ thống đã xác nhận danh tính. Đợi robot mở khóa ngăn tủ.
-                </Text>
-                <Pressable style={styles.btn} onPress={onClose}>
-                  <Text style={styles.btnText}>Về nhiệm vụ</Text>
-                </Pressable>
-              </>
-            )}
-
-            {state === 'error' && (
-              <>
-                <Ionicons name="alert-circle" size={42} color="#EF4444" />
-                <Text style={styles.errorText}>{error}</Text>
-                <Pressable
-                  style={styles.btn}
-                  onPress={() => { locked.current = false; setState('scanning'); }}
-                >
-                  <Text style={styles.btnText}>Quét lại</Text>
-                </Pressable>
-              </>
-            )}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Đóng máy quét"
+              onPress={close}
+              disabled={state === 'verifying'}
+              style={({ pressed }) => [
+                styles.closeButton,
+                pressed && { opacity: 0.7 },
+                state === 'verifying' && { opacity: 0.4 },
+              ]}
+            >
+              <Ionicons name="close" size={24} color={colors.textPrimary} />
+            </Pressable>
           </View>
-        )}
+
+          {/* Body Content */}
+          <ScrollView
+            contentContainerStyle={[
+              styles.body,
+              isLandscape && styles.bodyLandscape,
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Viewport Camera có giới hạn (không full màn hình, không méo) */}
+            {state === 'scanning' && permission?.granted ? (
+              <View style={[styles.cameraContainer, isLandscape && { flex: 1 }]}>
+                <View
+                  style={[
+                    styles.cameraBox,
+                    {
+                      width: isLandscape ? cameraMaxWidth : '100%',
+                      height: cameraMaxHeight,
+                    },
+                  ]}
+                >
+                  <CameraView
+                    style={StyleSheet.absoluteFill}
+                    facing="back"
+                    barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                    onBarcodeScanned={handleBarcode}
+                  />
+                  {/* Khung ngắm */}
+                  <View pointerEvents="none" style={styles.viewfinder}>
+                    <Ionicons name="scan" size={40} color="rgba(255,255,255,0.9)" />
+                  </View>
+                </View>
+                <AppText variant="caption" style={styles.cameraHint}>
+                  Hướng camera vào mã QR hiển thị trên ứng dụng Staff
+                </AppText>
+              </View>
+            ) : null}
+
+            {/* Trạng thái khác: xin quyền, đang xác thực, thành công, lỗi */}
+            {state !== 'scanning' || !permission?.granted ? (
+              <View style={[styles.statusBox, isLandscape && { flex: 1 }]}>
+                {state === 'scanning' && !permission?.granted && (
+                  <View style={styles.statusInner}>
+                    <Ionicons name="camera-outline" size={48} color={colors.textSecondary} />
+                    <AppText variant="heading" style={{ textAlign: 'center' }}>
+                      Cần cấp quyền Camera
+                    </AppText>
+                    <AppText variant="caption" style={{ textAlign: 'center', color: colors.textSecondary }}>
+                      Cho phép robot sử dụng camera để quét mã QR trên điện thoại nhân viên y tế.
+                    </AppText>
+                    {permission?.canAskAgain !== false ? (
+                      <Button
+                        title="Cấp quyền camera"
+                        icon="key-outline"
+                        onPress={() => void requestPermission()}
+                      />
+                    ) : (
+                      <Notice
+                        message="Vui lòng mở Cài đặt thiết bị để cho phép ứng dụng truy cập camera."
+                        tone="warning"
+                      />
+                    )}
+                  </View>
+                )}
+
+                {state === 'verifying' && (
+                  <View style={styles.statusInner}>
+                    <ActivityIndicator color={colors.primaryAction} size="large" />
+                    <AppText variant="heading" style={{ textAlign: 'center' }}>
+                      Đang xác thực mã QR…
+                    </AppText>
+                    <AppText variant="caption" style={{ textAlign: 'center', color: colors.textSecondary }}>
+                      Đang gửi dữ liệu xác thực lên máy chủ Backend. Vui lòng giữ nguyên máy quét.
+                    </AppText>
+                  </View>
+                )}
+
+                {state === 'verified' && (
+                  <View style={styles.statusInner}>
+                    <Ionicons name="checkmark-circle" size={56} color={colors.successText} />
+                    <AppText variant="heading" style={{ textAlign: 'center', color: colors.successText }}>
+                      Xác thực thành công!
+                    </AppText>
+                    <AppText variant="caption" style={{ textAlign: 'center', color: colors.textSecondary }}>
+                      Hệ thống đã xác nhận danh tính hợp lệ. Robot đang chuẩn bị mở chốt khoang.
+                    </AppText>
+                    <Button title="Về màn hình nhiệm vụ" onPress={onClose} />
+                  </View>
+                )}
+
+                {state === 'error' && (
+                  <View style={styles.statusInner}>
+                    <Ionicons name="alert-circle" size={52} color={colors.danger} />
+                    <AppText variant="heading" style={{ textAlign: 'center', color: colors.danger }}>
+                      Xác thực không thành công
+                    </AppText>
+                    <Notice message={error} tone="error" />
+                    <Button
+                      title="Quét lại mã khác"
+                      icon="refresh"
+                      onPress={() => {
+                        locked.current = false;
+                        setState('scanning');
+                      }}
+                    />
+                  </View>
+                )}
+              </View>
+            ) : null}
+          </ScrollView>
+        </View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0F172A', paddingHorizontal: 16, paddingTop: 48 },
-  header: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 16,
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.lg,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
-  headerText: { flex: 1 },
-  title: { color: '#F1F5F9', fontSize: 18, fontWeight: '800' },
-  subtitle: { color: '#94A3B8', fontSize: 13, marginTop: 2 },
-  close: { padding: 8 },
-  camera: {
-    width: '100%', aspectRatio: 1, borderRadius: radii.lg,
-    overflow: 'hidden', justifyContent: 'center', alignItems: 'center',
+  modalContainer: {
+    width: '100%',
+    maxWidth: 620,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    padding: spacing.xl,
+    gap: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  modalContainerLandscape: {
+    maxWidth: 720,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+  },
+  headerIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerText: {
+    flex: 1,
+  },
+  titleText: {
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  subtitleText: {
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  closeButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.surfaceMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  body: {
+    gap: spacing.lg,
+    alignItems: 'center',
+  },
+  bodyLandscape: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraContainer: {
+    alignItems: 'center',
+    gap: spacing.sm,
+    width: '100%',
+  },
+  cameraBox: {
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: '#000000',
   },
-  frame: {
-    width: 220, height: 220, borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.7)',
-    borderRadius: 20, justifyContent: 'center', alignItems: 'center',
+  viewfinder: {
+    width: 180,
+    height: 180,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: radii.md,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  hint: { color: '#94A3B8', textAlign: 'center', fontSize: 14, marginTop: 14 },
-  center: { alignItems: 'center', gap: 14, paddingVertical: 40 },
-  btn: {
-    paddingHorizontal: 20, paddingVertical: 10, borderRadius: radii.md,
-    backgroundColor: colors.primary, marginTop: 8,
+  cameraHint: {
+    color: colors.textSecondary,
+    textAlign: 'center',
+    maxWidth: 320,
   },
-  btnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 15 },
-  errorText: { color: '#FCA5A5', textAlign: 'center', fontSize: 14 },
+  statusBox: {
+    width: '100%',
+    paddingVertical: spacing.lg,
+  },
+  statusInner: {
+    alignItems: 'center',
+    gap: spacing.md,
+    width: '100%',
+    maxWidth: 360,
+    alignSelf: 'center',
+  },
 });

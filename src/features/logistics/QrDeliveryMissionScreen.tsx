@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
-import { AppText, Button, Card, LoadingState, Notice, Screen } from '../../components/ui';
+import { AppText, Button, Card, LoadingState, Notice, Screen, StatusChip } from '../../components/ui';
 import { QrScannerModal } from '../../components/QrScannerModal';
-import { colors, radii } from '../../theme';
+import { colors, radii, spacing, typography } from '../../theme';
 import { robotApiService } from '../../services/api';
 import { generateUuid } from '../../services/api/config';
 import { DeliveryConnectionForm } from './DeliveryConnectionForm';
@@ -40,9 +40,9 @@ const STAFF_QR_PREFIX = 'MARSTAFF1.';
 function PartyDetails({ title, party }: { title: string; party?: DeliveryParty }) {
   return (
     <View style={styles.party}>
-      <AppText variant="caption" style={styles.eyebrow}>{title}</AppText>
-      <AppText variant="heading">{party?.name || 'Chưa có thông tin'}</AppText>
-      {!!party?.location && <AppText variant="caption">{party.location}</AppText>}
+      <AppText variant="caption" style={styles.partyEyebrow}>{title}</AppText>
+      <AppText variant="label" style={{ fontWeight: '700' }}>{party?.name || 'Chưa có thông tin'}</AppText>
+      {!!party?.location && <AppText variant="caption" style={{ color: colors.textSecondary }}>{party.location}</AppText>}
     </View>
   );
 }
@@ -72,14 +72,14 @@ export function QrDeliveryMissionScreen({ connection, onConnect }: {
     );
   }
 
-  // Chưa gắn Job thật: hiển thị ngay luồng 2 mã QR (gửi → nhận).
+  // Chưa gắn Job thật: hiển thị luồng 2 mã QR (gửi → nhận)
   if (!reader || !connection) {
     return (
       <Screen>
         <View style={styles.content}>
-          <View>
+          <View style={styles.screenHeader}>
             <AppText variant="caption" style={styles.eyebrow}>MEDIASSIST ROVER</AppText>
-            <AppText variant="title" accessibilityRole="header">Vận chuyển</AppText>
+            <AppText variant="title" accessibilityRole="header">Vận chuyển tự hành</AppText>
           </View>
           <DeliveryTwoQrFlow onConnectRealJob={() => setEditing(true)} />
         </View>
@@ -105,7 +105,8 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
 }) {
   const { state, mission, challenge, reconnect } = useDeliveryMission(reader);
   const { width } = useWindowDimensions();
-  const qrSize = Math.max(152, Math.min(264, width - 108));
+  const isLandscape = width > 768;
+  const qrSize = Math.max(180, Math.min(260, Math.round(width * 0.28)));
   const stage = mission ? resolveDeliveryStage(mission) : null;
   const summary = stage ? stages[stage] : null;
   const waitingQr = stage === 'authSender' || stage === 'authReceiver';
@@ -127,7 +128,7 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
     }
     await robotApiService.verifyStaffPhoneQr(jobId, {
       authJobStepId: authStepId,
-      transportSessionId: generateUuid(), // placeholder — server sẽ kiểm tra MQTT session
+      transportSessionId: generateUuid(),
       proof: rawPayload,
     });
   };
@@ -135,9 +136,16 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
   return (
     <Screen>
       <View style={styles.content}>
-        <View>
-          <AppText variant="caption" style={styles.eyebrow}>MEDIASSIST ROVER</AppText>
-          <AppText variant="title" accessibilityRole="header">Vận chuyển</AppText>
+        <View style={styles.screenHeader}>
+          <View>
+            <AppText variant="caption" style={styles.eyebrow}>MEDIASSIST ROVER</AppText>
+            <AppText variant="title" accessibilityRole="header">Nhiệm vụ Vận chuyển</AppText>
+          </View>
+          <StatusChip
+            label={limited ? 'Job ID trực tiếp' : 'Bridge trực tiếp'}
+            tone="neutral"
+            size="sm"
+          />
         </View>
 
         {limited && (
@@ -145,86 +153,119 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
         )}
         {state === 'syncing' && <LoadingState message="Đang đồng bộ nhiệm vụ giao nhận…" />}
         {state === 'unavailable' && (
-          <>
+          <View style={styles.errorSection}>
             <Notice message="Chưa kết nối được hệ thống giao nhận. Đang thử kết nối lại." tone="error" />
             <Button title="Kết nối lại" icon="refresh" variant="secondary" onPress={reconnect} />
-          </>
+          </View>
         )}
         {state === 'ready' && !mission && (
           <Card>
             <AppText variant="heading">{limited ? "Chưa có mã QR đang hoạt động" : "Chưa thấy nhiệm vụ giao nhận"}</AppText>
-            <AppText>{limited ? "Mã sẽ xuất hiện khi hệ thống mở bước xác thực." : "Chưa có nhiệm vụ giao nhận trong phạm vi tài khoản cầu nối."}</AppText>
+            <AppText style={{ color: colors.textSecondary }}>
+              {limited ? "Mã sẽ xuất hiện khi hệ thống mở bước xác thực." : "Chưa có nhiệm vụ giao nhận trong phạm vi tài khoản cầu nối."}
+            </AppText>
           </Card>
         )}
 
         {mission && summary && (
-          <>
-            <Card style={stage === 'completed' ? styles.success : undefined}>
-              <View style={styles.statusHeading}>
-                <View style={styles.statusIcon}>
-                  <Ionicons name={summary.icon} size={26} color={colors.primary} />
-                </View>
-                <View style={styles.statusCopy} accessibilityLiveRegion="polite">
-                  {!!mission.requestCode && <AppText variant="caption">Nhiệm vụ {mission.requestCode}</AppText>}
-                  <AppText variant="heading" accessibilityRole="header">{summary.title}</AppText>
-                </View>
-              </View>
-              <AppText>{summary.instruction}</AppText>
-
-              {/* Nút mở camera quét QR Staff khi đang ở bước xác thực */}
-              {waitingQr && (
-                <View style={styles.scanActions}>
-                  <Button
-                    title={stage === 'authSender' ? '📷 Quét QR người gửi' : '📷 Quét QR người nhận'}
-                    icon="camera"
-                    onPress={() => setScannerOpen(true)}
-                  />
-                  <AppText variant="caption" style={styles.center}>
-                    Nhân viên y tế mở app Staff → hiện mã QR → Robot quét bằng camera
-                  </AppText>
-                </View>
-              )}
-
-              {/* Hiển thị mã QR robot (dự phòng — Staff quét robot) */}
-              {challenge && (
-                <View style={styles.qr}>
-                  <AppText variant="caption" style={styles.eyebrow}>
-                    {challenge.purpose === 'DELIVERY_SENDER'
-                      ? 'HOẶC: STAFF QUÉT MÃ NÀY TRÊN ROBOT'
-                      : 'HOẶC: STAFF QUÉT MÃ NÀY TRÊN ROBOT'}
-                  </AppText>
-                  <DeliveryQrCode payload={challenge.qrPayload} size={qrSize} />
-                  <AppText variant="caption" style={styles.center}>
-                    Staff cũng có thể hướng camera vào mã QR trên màn hình robot.
-                  </AppText>
-                </View>
-              )}
-              {waitingQr && !challenge && mission.step?.resolvedInputsJson?.method === 'QR_CODE' && (
-                <Notice message="Chưa có mã QR hợp lệ. Đang cập nhật từ hệ thống." />
-              )}
-            </Card>
-
-            {!limited && (
-              <Card>
-                <View style={styles.parties}>
-                  <PartyDetails title="NGƯỜI GỬI" party={mission.sender} />
-                  <PartyDetails title="NGƯỜI NHẬN" party={mission.receiver} />
-                </View>
-                {!!mission.items?.length && (
-                  <View style={styles.items}>
-                    <AppText variant="caption" style={styles.eyebrow}>HÀNG GIAO</AppText>
-                    {mission.items.map((item, index) => (
-                      <AppText key={index}>
-                        {item.itemName || 'Vật phẩm'} · {item.quantity}{item.unit ? ` ${item.unit}` : ''}
+          <View style={[styles.mainLayout, isLandscape && styles.mainLayoutLandscape]}>
+            {/* Cột trái: Trạng thái & thông tin giao nhận */}
+            <View style={[styles.leftColumn, isLandscape && { flex: 54 }]}>
+              <Card style={[styles.summaryCard, stage === 'completed' && styles.successCard]}>
+                <View style={styles.statusHeading}>
+                  <View style={styles.statusIconWrap}>
+                    <Ionicons name={summary.icon} size={26} color={colors.textPrimary} />
+                  </View>
+                  <View style={styles.statusCopy} accessibilityLiveRegion="polite">
+                    {!!mission.requestCode && (
+                      <AppText variant="caption" style={{ color: colors.textSecondary, fontWeight: '600' }}>
+                        Nhiệm vụ {mission.requestCode}
                       </AppText>
-                    ))}
+                    )}
+                    <AppText variant="heading" accessibilityRole="header" style={{ fontWeight: '700' }}>
+                      {summary.title}
+                    </AppText>
+                  </View>
+                </View>
+                <AppText style={{ color: colors.textSecondary, lineHeight: 24 }}>
+                  {summary.instruction}
+                </AppText>
+
+                {/* Quét camera khi chờ QR */}
+                {waitingQr && (
+                  <View style={styles.scanActions}>
+                    <Button
+                      title={stage === 'authSender' ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
+                      icon="camera"
+                      onPress={() => setScannerOpen(true)}
+                    />
+                    <AppText variant="caption" style={styles.centerMuted}>
+                      Nhân viên y tế mở app Staff → hiện mã QR → Robot quét bằng camera
+                    </AppText>
                   </View>
                 )}
               </Card>
-            )}
-          </>
+
+              {/* Thông tin các bên giao nhận */}
+              {!limited && (
+                <Card style={styles.partiesCard}>
+                  <View style={styles.parties}>
+                    <PartyDetails title="NGƯỜI GỬI (ĐIỂM A)" party={mission.sender} />
+                    <PartyDetails title="NGƯỜI NHẬN (ĐIỂM B)" party={mission.receiver} />
+                  </View>
+                  {!!mission.items?.length && (
+                    <View style={styles.itemsSection}>
+                      <AppText variant="caption" style={styles.partyEyebrow}>VẬT PHẨM GIAO NHẬN</AppText>
+                      {mission.items.map((item, index) => (
+                        <AppText key={index} style={{ fontWeight: '500' }}>
+                          • {item.itemName || 'Vật phẩm'} · {item.quantity}{item.unit ? ` ${item.unit}` : ''}
+                        </AppText>
+                      ))}
+                    </View>
+                  )}
+                </Card>
+              )}
+            </View>
+
+            {/* Cột phải: Mã QR của Robot (Staff quét mã này) */}
+            <Card style={[styles.qrColumnCard, isLandscape && { flex: 46 }]}>
+              {challenge ? (
+                <View style={styles.qrInner}>
+                  <StatusChip
+                    label="STAFF QUÉT MÃ NÀY TRÊN ROBOT"
+                    tone="hero"
+                    size="sm"
+                  />
+                  <View style={styles.qrBox}>
+                    <DeliveryQrCode payload={challenge.qrPayload} size={qrSize} />
+                  </View>
+                  <AppText variant="caption" style={styles.centerMuted}>
+                    Staff có thể dùng camera điện thoại quét mã QR hiển thị ở trên.
+                  </AppText>
+                </View>
+              ) : waitingQr && !challenge && mission.step?.resolvedInputsJson?.method === 'QR_CODE' ? (
+                <Notice message="Chưa có mã QR hợp lệ. Đang cập nhật từ hệ thống." />
+              ) : (
+                <View style={styles.waitingPlaceholder}>
+                  <Ionicons name="time-outline" size={44} color={colors.textSecondary} />
+                  <AppText variant="heading" style={{ textAlign: 'center' }}>
+                    {stage === 'transporting' ? 'Đang trên đường di chuyển' : 'Đang xử lý nhiệm vụ'}
+                  </AppText>
+                  <AppText variant="caption" style={styles.centerMuted}>
+                    Mã xác thực QR sẽ hiển thị tự động khi robot đến điểm dừng.
+                  </AppText>
+                </View>
+              )}
+            </Card>
+          </View>
         )}
-        <Button title="Cài đặt kết nối" variant="secondary" icon="settings-outline" onPress={onEdit} />
+
+        <Button
+          title="Cài đặt kết nối"
+          variant="secondary"
+          icon="settings-outline"
+          onPress={onEdit}
+        />
       </View>
 
       {/* Camera QR Scanner Modal */}
@@ -241,19 +282,115 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 16, paddingBottom: 48 },
-  eyebrow: { color: colors.primaryDark, fontWeight: '700', letterSpacing: 0.6 },
-  statusHeading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  statusIcon: {
-    width: 48, height: 48, alignItems: 'center', justifyContent: 'center',
-    borderRadius: radii.md, backgroundColor: colors.primarySoft,
+  content: {
+    gap: spacing.lg,
+    paddingBottom: 60,
   },
-  statusCopy: { flex: 1 },
-  success: { borderColor: colors.success, backgroundColor: colors.successSoft },
-  scanActions: { gap: 8, paddingVertical: 8 },
-  qr: { alignItems: 'center', gap: 8, paddingVertical: 8 },
-  center: { textAlign: 'center' },
-  parties: { flexDirection: 'row', flexWrap: 'wrap', gap: 18 },
-  party: { flex: 1, minWidth: 140, gap: 3 },
-  items: { gap: 3, paddingTop: 12, borderTopWidth: 1, borderColor: colors.border },
+  screenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  eyebrow: {
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  errorSection: {
+    gap: spacing.md,
+  },
+  mainLayout: {
+    gap: spacing.lg,
+  },
+  mainLayoutLandscape: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  leftColumn: {
+    gap: spacing.md,
+  },
+  summaryCard: {
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  successCard: {
+    borderColor: colors.successText,
+    backgroundColor: colors.successSurface,
+  },
+  statusHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  statusIconWrap: {
+    width: 48,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  statusCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  scanActions: {
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
+  },
+  centerMuted: {
+    textAlign: 'center',
+    color: colors.textSecondary,
+    maxWidth: 280,
+    alignSelf: 'center',
+  },
+  partiesCard: {
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  parties: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.lg,
+  },
+  party: {
+    flex: 1,
+    minWidth: 140,
+    gap: 2,
+  },
+  partyEyebrow: {
+    color: colors.textMuted,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  itemsSection: {
+    gap: 4,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderColor: colors.border,
+  },
+  qrColumnCard: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrInner: {
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  qrBox: {
+    backgroundColor: '#FFFFFF',
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  waitingPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: spacing.sm,
+  },
 });

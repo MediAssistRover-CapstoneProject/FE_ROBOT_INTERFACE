@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AppText } from './ui';
-import { colors } from '../theme';
+import { colors, radii, spacing, typography } from '../theme';
 
 interface Props {
   currentStep: number; // 1 to 6
@@ -58,11 +58,11 @@ export function LogisticsStepper({ currentStep, steps = DEFAULT_STEPS, warningSt
                   ]}
                 >
                   {isReturn ? (
-                    <Ionicons name="arrow-undo" size={12} color="#FFFFFF" />
+                    <Ionicons name="arrow-undo" size={14} color="#FFFFFF" />
                   ) : isWarning ? (
                     <AppText style={styles.warningExclamation}>!</AppText>
                   ) : isDone ? (
-                    <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                    <Ionicons name="checkmark" size={14} color="#FFFFFF" />
                   ) : isActive ? (
                     <View style={styles.activeDot} />
                   ) : (
@@ -90,13 +90,13 @@ export function LogisticsStepper({ currentStep, steps = DEFAULT_STEPS, warningSt
 
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 12,
-    paddingHorizontal: 6,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    marginVertical: 6,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    marginVertical: spacing.xs,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
   },
   stepperRow: {
     flexDirection: 'row',
@@ -105,83 +105,83 @@ const styles = StyleSheet.create({
   },
   stepItem: {
     alignItems: 'center',
-    width: 48,
+    width: 52,
   },
   connector: {
     flex: 1,
     height: 2,
-    marginTop: 13,
+    marginTop: 15,
     marginHorizontal: -4,
   },
   connectorActive: {
-    backgroundColor: '#0284C7',
+    backgroundColor: colors.hero,
   },
   connectorWarning: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.warningText,
   },
   connectorInactive: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: colors.border,
   },
   circle: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   circleDone: {
-    backgroundColor: '#10B981',
+    backgroundColor: colors.successText,
   },
   circleActive: {
-    backgroundColor: '#0284C7',
+    backgroundColor: colors.hero,
     borderWidth: 3,
-    borderColor: '#BAE6FD',
+    borderColor: colors.darkRaised,
   },
   circleWarning: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.warningText,
     borderWidth: 3,
-    borderColor: '#FDE68A',
-  },
-  warningExclamation: {
-    color: '#FFFFFF',
-    fontWeight: '900',
-    fontSize: 13,
-    lineHeight: 15,
+    borderColor: colors.warningSurface,
   },
   circleUpcoming: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.border,
   },
   activeDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.textInverse,
   },
   upcomingText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#94A3B8',
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  warningExclamation: {
+    color: '#FFFFFF',
+    fontWeight: '900',
+    fontSize: 14,
+    lineHeight: 16,
   },
   label: {
-    fontSize: 8,
+    fontSize: 11,
+    lineHeight: 14,
     textAlign: 'center',
-    color: '#94A3B8',
-    lineHeight: 11,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   labelActive: {
-    color: '#0284C7',
-    fontWeight: '700',
+    color: colors.textPrimary,
+    fontWeight: '800',
   },
   labelWarning: {
-    color: '#D97706',
+    color: colors.warningText,
     fontWeight: '700',
   },
   labelDone: {
-    color: '#10B981',
+    color: colors.successText,
     fontWeight: '600',
   },
 });

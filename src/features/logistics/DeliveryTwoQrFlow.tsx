@@ -1,24 +1,11 @@
 import { useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
-import { AppText, Button, Card, Notice } from '../../components/ui';
+import { AppText, Button, Card, Notice, StatusChip } from '../../components/ui';
 import { QrScannerModal } from '../../components/QrScannerModal';
-import { colors, radii } from '../../theme';
+import { colors, radii, spacing, typography } from '../../theme';
 import { DeliveryQrCode } from './DeliveryQrCode';
 import type { DeliveryPurpose } from './deliveryMission';
-
-/**
- * Luồng giao nhận 2 mã QR hiển thị trên màn hình robot:
- *
- *  1. Điểm gửi (A)  → QR #1 `DELIVERY_SENDER`: người gửi quét bằng Staff App
- *     để mở khoang, bỏ đồ vào rồi đóng & khóa.
- *  2. Vận chuyển A → B (khoang khóa).
- *  3. Điểm nhận (B) → QR #2 `DELIVERY_RECEIVER` (mã khác hoàn toàn): người nhận
- *     quét để mở khoang, lấy đồ, đóng khoang → hoàn tất.
- *
- * Chế độ này là bản xem trước khi chưa gắn Job thật. Khi kết nối Job thật,
- * mã QR có chữ ký sẽ do Backend cấp (`/api/v1/pi/jobs/{jobId}/qr-challenge`).
- */
 
 type FlowStep = 'senderQr' | 'loading' | 'transporting' | 'receiverQr' | 'unloading' | 'done';
 
@@ -27,43 +14,42 @@ const ORDER: FlowStep[] = ['senderQr', 'loading', 'transporting', 'receiverQr', 
 const STEP_INFO: Record<FlowStep, { title: string; hint: string; icon: keyof typeof Ionicons.glyphMap; next?: string }> = {
   senderQr: {
     title: 'Điểm gửi (A) · Quét QR #1',
-    hint: 'Người gửi mở Staff App, quét mã QR #1 để mở khoang robot.',
+    hint: 'Người gửi mở ứng dụng Staff, quét mã QR #1 để mở khoang robot.',
     icon: 'qr-code-outline',
     next: 'Đã quét — mở khoang',
   },
   loading: {
-    title: 'Khoang đã mở · Bỏ đồ vào',
-    hint: 'Đặt hàng vào khoang, đóng nắp và xác nhận khóa trên Staff App.',
+    title: 'Khoang đã mở · Nạp vật phẩm',
+    hint: 'Đặt vật phẩm vào khoang, đóng nắp và xác nhận khóa trên ứng dụng Staff.',
     icon: 'cube-outline',
     next: 'Đã đóng & khóa khoang',
   },
   transporting: {
     title: 'Đang vận chuyển A → B',
-    hint: 'Khoang đang khóa. Robot di chuyển đến điểm nhận.',
+    hint: 'Khoang đang khóa an toàn. Robot tự hành di chuyển đến điểm nhận.',
     icon: 'navigate-outline',
     next: 'Robot đã đến điểm nhận',
   },
   receiverQr: {
     title: 'Điểm nhận (B) · Quét QR #2',
-    hint: 'Người nhận mở Staff App, quét mã QR #2 để mở khoang lấy đồ.',
+    hint: 'Người nhận mở ứng dụng Staff, quét mã QR #2 để mở khoang lấy đồ.',
     icon: 'qr-code-outline',
     next: 'Đã quét — mở khoang',
   },
   unloading: {
     title: 'Khoang đã mở · Lấy đồ ra',
-    hint: 'Lấy hàng khỏi khoang, đóng nắp và xác nhận trên Staff App.',
+    hint: 'Lấy vật phẩm khỏi khoang, đóng nắp và xác nhận trên ứng dụng Staff.',
     icon: 'hand-left-outline',
     next: 'Đã lấy đồ & đóng khoang',
   },
   done: {
     title: 'Giao nhận hoàn tất',
-    hint: 'Nhiệm vụ đã được bàn giao thành công.',
+    hint: 'Nhiệm vụ vận chuyển đã được bàn giao thành công an toàn.',
     icon: 'checkmark-circle-outline',
   },
 };
 
 const b64url = (input: string) => {
-  // btoa có sẵn trên Hermes/Web; mã ASCII nên an toàn.
   const encoded = typeof btoa === 'function' ? btoa(input) : input;
   return encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 };
@@ -74,7 +60,6 @@ const randomId = () =>
     return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
   });
 
-/** Payload cùng định dạng `MARQR1` với Staff App (chữ ký giả lập ở chế độ xem trước). */
 function buildPreviewPayload(jobId: string, purpose: DeliveryPurpose) {
   const challengeId = randomId();
   const stepId = randomId();
@@ -86,12 +71,13 @@ function buildPreviewPayload(jobId: string, purpose: DeliveryPurpose) {
 
 export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () => void }) {
   const { width } = useWindowDimensions();
-  const qrSize = Math.max(160, Math.min(240, width - 120));
+  const isLandscape = width > 768;
+  const qrSize = Math.max(180, Math.min(260, Math.round(width * 0.28)));
+
   const [step, setStep] = useState<FlowStep>('senderQr');
   const [jobId, setJobId] = useState(randomId);
   const [scannerOpen, setScannerOpen] = useState(false);
 
-  // Hai mã QR khác nhau hoàn toàn cho cùng một job.
   const senderQr = useMemo(() => buildPreviewPayload(jobId, 'DELIVERY_SENDER'), [jobId]);
   const receiverQr = useMemo(() => buildPreviewPayload(jobId, 'DELIVERY_RECEIVER'), [jobId]);
 
@@ -108,80 +94,152 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
 
   return (
     <View style={styles.wrap}>
-      {/* Thanh tiến trình A → B */}
-      <View style={styles.progress}>
+      {/* Simulation Banner Notice */}
+      <View style={styles.badgeRow}>
+        <StatusChip
+          label="Mô phỏng — không điều khiển robot"
+          tone="warning"
+          icon="information-circle-outline"
+        />
+        <AppText variant="caption" style={styles.jobIdCaption}>
+          Job: {jobId.slice(0, 8).toUpperCase()}
+        </AppText>
+      </View>
+
+      {/* Progress Stepper */}
+      <View style={styles.stepperContainer}>
         {[
-          { label: 'QR #1 · Gửi', active: index <= 1, done: index > 1 },
-          { label: 'Vận chuyển', active: index === 2, done: index > 2 },
-          { label: 'QR #2 · Nhận', active: index >= 3 && index <= 4, done: index > 4 },
+          { label: 'QR #1 · Điểm gửi', active: index <= 1, done: index > 1 },
+          { label: 'Vận chuyển A → B', active: index === 2, done: index > 2 },
+          { label: 'QR #2 · Điểm nhận', active: index >= 3 && index <= 4, done: index > 4 },
         ].map((s, i) => (
-          <View key={s.label} style={styles.progressItem}>
+          <View key={s.label} style={styles.stepperItem}>
             <View
               style={[
-                styles.progressDot,
-                s.active && styles.progressDotActive,
-                s.done && styles.progressDotDone,
+                styles.stepperDot,
+                s.active && styles.stepperDotActive,
+                s.done && styles.stepperDotDone,
               ]}
             >
               {s.done ? (
                 <Ionicons name="checkmark" size={14} color="#FFFFFF" />
               ) : (
-                <AppText style={[styles.progressNum, (s.active || s.done) && styles.progressNumActive]}>{i + 1}</AppText>
+                <AppText
+                  style={[
+                    styles.stepperNum,
+                    (s.active || s.done) && styles.stepperNumActive,
+                  ]}
+                >
+                  {i + 1}
+                </AppText>
               )}
             </View>
-            <AppText style={[styles.progressLabel, s.active && styles.progressLabelActive]}>{s.label}</AppText>
+            <AppText
+              style={[
+                styles.stepperLabel,
+                s.active && styles.stepperLabelActive,
+                s.done && styles.stepperLabelDone,
+              ]}
+            >
+              {s.label}
+            </AppText>
           </View>
         ))}
       </View>
 
-      <Card style={step === 'done' ? styles.success : undefined}>
-        <View style={styles.heading}>
-          <View style={styles.icon}>
-            <Ionicons name={info.icon} size={26} color={colors.primary} />
-          </View>
-          <View style={styles.headingCopy} accessibilityLiveRegion="polite">
-            <AppText variant="caption">Job {jobId.slice(0, 8).toUpperCase()}</AppText>
-            <AppText variant="heading" accessibilityRole="header">{info.title}</AppText>
-          </View>
-        </View>
-        <AppText>{info.hint}</AppText>
-
-        {qr && (
-          <View style={styles.qrBox}>
-            <View style={[styles.qrBadge, { backgroundColor: isSender ? '#0369A1' : '#047857' }]}>
-              <AppText style={styles.qrBadgeText}>
-                {isSender ? 'QR #1 · NGƯỜI GỬI · DELIVERY_SENDER' : 'QR #2 · NGƯỜI NHẬN · DELIVERY_RECEIVER'}
+      {/* Main Content Area: Landscape 2 columns when wide */}
+      <View style={[styles.mainLayout, isLandscape && styles.mainLayoutLandscape]}>
+        {/* Left Column: Mission Status & Instructions */}
+        <Card style={[styles.statusCard, isLandscape && { flex: 50 }]}>
+          <View style={styles.stepHeader}>
+            <View style={styles.stepIconWrap}>
+              <Ionicons name={info.icon} size={24} color={colors.textPrimary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="caption" style={{ color: colors.textSecondary }}>
+                Giai đoạn {index + 1}/6
+              </AppText>
+              <AppText variant="heading" style={{ fontWeight: '700' }}>
+                {info.title}
               </AppText>
             </View>
-            <DeliveryQrCode payload={qr.payload} size={qrSize} />
-            <AppText variant="caption" style={styles.center}>
-              Mã {qr.challengeId.slice(0, 8).toUpperCase()} · hết hạn sau 10 phút
-            </AppText>
           </View>
-        )}
 
-        <View style={styles.actions}>
-          {info.next ? (
-            <Button title={info.next} icon="arrow-forward" onPress={advance} />
-          ) : (
-            <Button title="Nhiệm vụ mới" icon="refresh" onPress={reset} />
+          <AppText style={styles.hintText}>{info.hint}</AppText>
+
+          {/* Action Button */}
+          <View style={styles.stepActionBox}>
+            {info.next ? (
+              <Button title={info.next} icon="arrow-forward" onPress={advance} />
+            ) : (
+              <Button title="Nhiệm vụ mô phỏng mới" icon="refresh" onPress={reset} />
+            )}
+          </View>
+
+          {/* Camera Scanner Trigger (if on QR steps) */}
+          {(step === 'senderQr' || step === 'receiverQr') && (
+            <Button
+              title={isSender ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
+              icon="camera"
+              variant="secondary"
+              onPress={() => setScannerOpen(true)}
+            />
           )}
-        </View>
-      </Card>
 
-      <Notice message="Đang ở chế độ xem trước: mã QR đúng định dạng MARQR1 nhưng chữ ký là giả lập, Staff App sẽ không xác thực được. Bấm 'Kết nối Job thật' để robot hiển thị mã QR có chữ ký do Backend cấp." />
+          <Button
+            title="Kết nối Job thật / Bridge"
+            variant="secondary"
+            icon="link-outline"
+            onPress={onConnectRealJob}
+          />
+        </Card>
 
-      {/* Nút mở camera quét QR Staff (chế độ xem trước) */}
-      {(step === 'senderQr' || step === 'receiverQr') && (
-        <Button
-          title={isSender ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
-          icon="camera"
-          variant="secondary"
-          onPress={() => setScannerOpen(true)}
-        />
-      )}
+        {/* Right Column: QR Code Card */}
+        <Card style={[styles.qrCard, isLandscape && { flex: 50 }]}>
+          {qr ? (
+            <View style={styles.qrInner}>
+              <View style={[styles.qrBadge, isSender ? styles.qrBadgeSender : styles.qrBadgeReceiver]}>
+                <AppText style={styles.qrBadgeText}>
+                  {isSender ? 'QR #1 · NGƯỜI GỬI (ĐIỂM A)' : 'QR #2 · NGƯỜI NHẬN (ĐIỂM B)'}
+                </AppText>
+              </View>
 
-      <Button title="Kết nối Job thật / Bridge" variant="secondary" icon="link-outline" onPress={onConnectRealJob} />
+              <View style={styles.qrBox}>
+                <DeliveryQrCode payload={qr.payload} size={qrSize} />
+              </View>
+
+              <View style={styles.qrMetaBox}>
+                <AppText variant="caption" style={styles.qrMetaText}>
+                  Mã: {qr.challengeId.slice(0, 8).toUpperCase()} • Hết hạn sau 10 phút
+                </AppText>
+                <AppText variant="caption" style={styles.qrInstructionSub}>
+                  Nhân viên mở app Staff và hướng camera vào mã QR này để mở khoang.
+                </AppText>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.noQrPlaceholder}>
+              <Ionicons
+                name={step === 'transporting' ? 'navigate-circle' : 'checkmark-circle'}
+                size={48}
+                color={step === 'done' ? colors.successText : colors.textPrimary}
+              />
+              <AppText variant="heading" style={{ textAlign: 'center', marginTop: 12 }}>
+                {step === 'transporting'
+                  ? 'Robot đang di chuyển'
+                  : step === 'loading'
+                  ? 'Đang nạp vật phẩm'
+                  : step === 'unloading'
+                  ? 'Đang lấy vật phẩm'
+                  : 'Hoàn tất giao nhận'}
+              </AppText>
+              <AppText variant="caption" style={{ textAlign: 'center', color: colors.textSecondary }}>
+                {info.hint}
+              </AppText>
+            </View>
+          )}
+        </Card>
+      </View>
 
       {/* Camera Scanner Modal */}
       {scannerOpen && (
@@ -189,11 +247,9 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
           title={isSender ? 'Quét QR nhân viên gửi' : 'Quét QR nhân viên nhận'}
           subtitle={`Xem trước · Job ${jobId.slice(0, 8).toUpperCase()}`}
           onScan={async (raw) => {
-            // Chế độ xem trước: chỉ kiểm tra format, không gọi server
             if (!raw.startsWith('MARSTAFF1.')) {
               throw new Error('Mã QR không đúng định dạng Staff. Yêu cầu nhân viên mở app và hiện mã QR giao nhận.');
             }
-            // Giả lập xác thực thành công → chuyển bước
             advance();
           }}
           onClose={() => setScannerOpen(false)}
@@ -204,29 +260,154 @@ export function DeliveryTwoQrFlow({ onConnectRealJob }: { onConnectRealJob: () =
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 14 },
-  progress: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 4 },
-  progressItem: { alignItems: 'center', gap: 4, flex: 1 },
-  progressDot: {
-    width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: colors.border,
+  wrap: {
+    gap: spacing.lg,
   },
-  progressDotActive: { backgroundColor: colors.primary },
-  progressDotDone: { backgroundColor: colors.success },
-  progressNum: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-  progressNumActive: { color: '#FFFFFF' },
-  progressLabel: { fontSize: 11, color: colors.textMuted, fontWeight: '600' },
-  progressLabelActive: { color: colors.primaryDark, fontWeight: '800' },
-  heading: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  icon: {
-    width: 48, height: 48, alignItems: 'center', justifyContent: 'center',
-    borderRadius: radii.md, backgroundColor: colors.primarySoft,
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  headingCopy: { flex: 1 },
-  success: { borderColor: colors.success, backgroundColor: colors.successSoft },
-  qrBox: { alignItems: 'center', gap: 8, paddingVertical: 8 },
-  qrBadge: { borderRadius: 10, paddingHorizontal: 10, paddingVertical: 4 },
-  qrBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
-  center: { textAlign: 'center' },
-  actions: { marginTop: 8 },
+  jobIdCaption: {
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  stepperContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  stepperItem: {
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  stepperDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  stepperDotActive: {
+    backgroundColor: colors.hero,
+    borderColor: colors.hero,
+  },
+  stepperDotDone: {
+    backgroundColor: colors.successText,
+    borderColor: colors.successText,
+  },
+  stepperNum: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  stepperNumActive: {
+    color: '#FFFFFF',
+  },
+  stepperLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  stepperLabelActive: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+  },
+  stepperLabelDone: {
+    color: colors.successText,
+  },
+  mainLayout: {
+    gap: spacing.lg,
+  },
+  mainLayoutLandscape: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
+  statusCard: {
+    padding: spacing.xl,
+    gap: spacing.md,
+  },
+  stepHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  stepIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hintText: {
+    color: colors.textSecondary,
+    lineHeight: 24,
+  },
+  stepActionBox: {
+    marginTop: spacing.xs,
+  },
+  qrCard: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrInner: {
+    alignItems: 'center',
+    gap: spacing.md,
+    width: '100%',
+  },
+  qrBadge: {
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  qrBadgeSender: {
+    backgroundColor: colors.hero,
+  },
+  qrBadgeReceiver: {
+    backgroundColor: colors.successText,
+  },
+  qrBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  qrBox: {
+    backgroundColor: '#FFFFFF',
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  qrMetaBox: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  qrMetaText: {
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  qrInstructionSub: {
+    color: colors.textSecondary,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  noQrPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 40,
+    gap: 8,
+  },
 });
