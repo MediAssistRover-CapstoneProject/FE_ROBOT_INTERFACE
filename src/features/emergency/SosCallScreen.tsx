@@ -4,16 +4,18 @@ import {
   Pressable,
   StyleSheet,
   View,
+  ScrollView,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../app/navigation';
-import { AppText } from '../../components/ui';
+import { AppText, StatusChip } from '../../components/ui';
 import { AudioWaveform } from '../../components/AudioWaveform';
 import { robotApiService } from '../../services/api';
 import { DeviceIncidentStatusResponse } from '../../services/api/types';
 import { generateUuid } from '../../services/api/config';
+import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Emergency'>;
 
@@ -33,8 +35,6 @@ export function SosCallScreen({ route, navigation }: Props) {
   const { mapId, xM, yM, roomCode, roomName } = route.params || {};
 
   const [callSeconds, setCallSeconds] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
 
   // 1. Quản lý vòng đời SOS thật với Backend
   const [sosState, setSosState] = useState<SosCallState>('INITIALIZING');
@@ -65,7 +65,7 @@ export function SosCallScreen({ route, navigation }: Props) {
     latencyMs: 0,
   });
 
-  // 2. Hàm gửi SOS tới BE với envelope EMERGENCY_SOS và operationKey ổn định
+  // 2. Gửi SOS tới BE với envelope EMERGENCY_SOS và operationKey ổn định
   const sendSosRequest = async () => {
     setIsRetrying(true);
     setErrorMessage(null);
@@ -124,7 +124,7 @@ export function SosCallScreen({ route, navigation }: Props) {
     sendSosRequest();
   }, []);
 
-  // 4. Timer đếm giây cuộc gọi
+  // 4. Timer đếm giây mở màn hình SOS
   useEffect(() => {
     const timer = setInterval(() => {
       setCallSeconds((prev) => prev + 1);
@@ -186,7 +186,7 @@ export function SosCallScreen({ route, navigation }: Props) {
     };
   }, [incidentId, sosState]);
 
-  // Thoát màn hình SOS - KHÔNG gửi heartbeat IDLE theo tài liệu bàn giao
+  // Thoát màn hình SOS - KHÔNG gửi heartbeat IDLE theo quy tắc an toàn
   const handleEndCall = () => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     navigation.goBack();
@@ -207,7 +207,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Đang kết nối trung tâm cấp cứu...',
           subtitle: 'Phát tín hiệu SOS đến trạm điều dưỡng trực',
           badgeText: 'Đang gửi tín hiệu...',
-          badgeColor: '#F59E0B',
+          badgeColor: colors.warningText,
           isWorking: true,
           statusText: 'Đang phát tín hiệu SOS...',
         };
@@ -216,7 +216,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Đã gửi SOS · Chờ nhân viên tiếp nhận',
           subtitle: 'Tín hiệu đã tới máy chủ. Đang chờ nhân viên trực bấm nhận.',
           badgeText: 'Đã gửi SOS (Chờ tiếp nhận)',
-          badgeColor: '#38BDF8',
+          badgeColor: colors.mapRoute,
           isWorking: true,
           statusText: 'Đang chờ nhân viên y tế tiếp nhận máy...',
         };
@@ -225,7 +225,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Nhân viên y tế đã tiếp nhận',
           subtitle: 'Điều dưỡng trực đã nhận tín hiệu · Đang chuẩn bị hỗ trợ',
           badgeText: 'Đã tiếp nhận (200 OK)',
-          badgeColor: '#10B981',
+          badgeColor: colors.successText,
           isWorking: false,
           statusText: 'Nhân viên y tế đã tiếp nhận hỗ trợ',
         };
@@ -234,7 +234,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Đang xử lý sự cố tại hiện trường',
           subtitle: 'Đội cấp cứu đang xử lý sự cố cứu hộ tại vị trí robot',
           badgeText: 'Đang xử lý',
-          badgeColor: '#10B981',
+          badgeColor: colors.successText,
           isWorking: false,
           statusText: 'Nhân viên đang trực tiếp xử lý',
         };
@@ -243,7 +243,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Sự cố đã được xử lý hoàn tất',
           subtitle: 'Quy trình cứu hộ đã hoàn thành an toàn',
           badgeText: 'Đã hoàn tất',
-          badgeColor: '#10B981',
+          badgeColor: colors.successText,
           isWorking: false,
           statusText: 'Đã xử lý xong',
         };
@@ -252,7 +252,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Hồ sơ sự cố đã đóng',
           subtitle: 'Sự cố SOS đã kết thúc',
           badgeText: 'Đã đóng',
-          badgeColor: '#64748B',
+          badgeColor: colors.textMuted,
           isWorking: false,
           statusText: 'Hồ sơ đã đóng',
         };
@@ -261,7 +261,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Báo động giả đã được hủy',
           subtitle: 'Nhân viên trực đã xác nhận sự cố báo động nhầm và đóng hồ sơ',
           badgeText: 'Báo động giả',
-          badgeColor: '#94A3B8',
+          badgeColor: colors.textSecondary,
           isWorking: false,
           statusText: 'Báo động giả đã hủy',
         };
@@ -270,7 +270,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           title: 'Gửi tín hiệu SOS thất bại',
           subtitle: errorMessage || 'Không thể kết nối đến máy chủ cấp cứu',
           badgeText: 'Gửi lỗi (Thử lại)',
-          badgeColor: '#EF4444',
+          badgeColor: colors.danger,
           isWorking: false,
           statusText: 'Lỗi gửi tín hiệu cấp cứu',
         };
@@ -278,20 +278,21 @@ export function SosCallScreen({ route, navigation }: Props) {
   };
 
   const display = getDisplayDetails();
-  const isCallConnected =
+  const isAcknowledged =
     sosState === 'ACKNOWLEDGED' || sosState === 'IN_PROGRESS';
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top, paddingBottom: insets.bottom + 12 }]}>
-      {/* 1. Top Header Row & Live Console Pill */}
+    <View style={[styles.root, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 16 }]}>
+      {/* 1. Top Header Row */}
       <View style={styles.topHeader}>
         <View style={styles.sosBadge}>
           <View style={styles.redDot} />
-          <AppText style={styles.sosBadgeText}>SOS KHẨN CẤP · ROBOT AMR</AppText>
+          <AppText style={styles.sosBadgeText}>HỖ TRỢ KHẨN CẤP · ROBOT AMR</AppText>
         </View>
 
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Xem chi tiết kết nối API"
           onPress={() => setShowApiConsole(!showApiConsole)}
           style={styles.apiStatusPill}
         >
@@ -302,7 +303,7 @@ export function SosCallScreen({ route, navigation }: Props) {
             ]}
           />
           <AppText style={styles.apiStatusPillText}>{display.badgeText}</AppText>
-          <Ionicons name={showApiConsole ? 'chevron-up' : 'chevron-down'} size={12} color="#94A3B8" />
+          <Ionicons name={showApiConsole ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textInverseSecondary} />
         </Pressable>
       </View>
 
@@ -310,7 +311,7 @@ export function SosCallScreen({ route, navigation }: Props) {
       {showApiConsole && (
         <View style={styles.apiConsoleBox}>
           <View style={styles.apiConsoleHeader}>
-            <Ionicons name="radio-outline" size={14} color="#EF4444" />
+            <Ionicons name="radio-outline" size={14} color={colors.danger} />
             <AppText style={styles.apiConsoleTitle}>LIVE INCIDENTS SOS TELEMETRY</AppText>
           </View>
           <View style={styles.apiRow}>
@@ -340,31 +341,31 @@ export function SosCallScreen({ route, navigation }: Props) {
         </View>
       )}
 
-      {/* 3. Main Center Content */}
+      {/* 3. Main Center Content Card */}
       <View style={styles.centerContainer}>
-        {/* Concentric Rings */}
+        {/* Concentric Rings Visual */}
         <View
           style={[
             styles.outerRing,
-            isCallConnected && { borderColor: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.1)' },
-            sosState === 'FAILED' && { borderColor: '#EF4444', backgroundColor: 'rgba(239, 68, 68, 0.15)' },
+            isAcknowledged && styles.outerRingSuccess,
+            sosState === 'FAILED' && styles.outerRingFailed,
           ]}
         >
           <View
             style={[
               styles.middleRing,
-              isCallConnected && { borderColor: '#34D399', backgroundColor: 'rgba(52, 211, 153, 0.2)' },
-              sosState === 'FAILED' && { borderColor: '#DC2626', backgroundColor: 'rgba(220, 38, 38, 0.25)' },
+              isAcknowledged && styles.middleRingSuccess,
+              sosState === 'FAILED' && styles.middleRingFailed,
             ]}
           >
             <View style={styles.avatarCircle}>
               {display.isWorking ? (
-                <ActivityIndicator size="large" color="#EF4444" />
+                <ActivityIndicator size="large" color={colors.danger} />
               ) : (
                 <Ionicons
-                  name={isCallConnected ? 'medkit' : sosState === 'FAILED' ? 'alert-circle' : 'person'}
-                  size={52}
-                  color={isCallConnected ? '#059669' : sosState === 'FAILED' ? '#EF4444' : '#0F4C81'}
+                  name={isAcknowledged ? 'medkit' : sosState === 'FAILED' ? 'alert-circle' : 'megaphone'}
+                  size={46}
+                  color={isAcknowledged ? colors.successText : sosState === 'FAILED' ? colors.danger : colors.textPrimary}
                 />
               )}
             </View>
@@ -372,14 +373,19 @@ export function SosCallScreen({ route, navigation }: Props) {
         </View>
 
         {/* Dynamic Title & Subtitle */}
-        <AppText style={styles.staffName}>{display.title}</AppText>
-        <AppText style={styles.staffRole}>{display.subtitle}</AppText>
+        <AppText variant="title" style={styles.statusTitle}>
+          {display.title}
+        </AppText>
+        <AppText variant="body" style={styles.statusSubtitle}>
+          {display.subtitle}
+        </AppText>
 
-        {/* Calling Status with Wave or Error Retry */}
+        {/* Action Status Wave or Error Retry */}
         {sosState === 'FAILED' ? (
           <View style={styles.failedContainer}>
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Thử lại gửi tín hiệu SOS"
               onPress={sendSosRequest}
               disabled={isRetrying}
               style={({ pressed }) => [
@@ -391,7 +397,7 @@ export function SosCallScreen({ route, navigation }: Props) {
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="refresh" size={18} color="#FFFFFF" />
+                  <Ionicons name="refresh" size={20} color="#FFFFFF" />
                   <AppText style={styles.retryButtonText}>Thử lại ngay</AppText>
                 </>
               )}
@@ -402,16 +408,16 @@ export function SosCallScreen({ route, navigation }: Props) {
             <AppText
               style={[
                 styles.callingStatusText,
-                isCallConnected && { color: '#34D399' },
+                isAcknowledged && { color: '#34D399' },
               ]}
             >
               {display.statusText}
             </AppText>
             <View style={styles.waveWrap}>
               <AudioWaveform
-                color={isCallConnected ? '#10B981' : '#F59E0B'}
+                color={isAcknowledged ? colors.successText : colors.warningText}
                 count={18}
-                height={18}
+                height={16}
               />
             </View>
           </View>
@@ -419,7 +425,7 @@ export function SosCallScreen({ route, navigation }: Props) {
 
         {/* Real-time Tọa độ định vị */}
         <View style={styles.locationNotice}>
-          <Ionicons name="navigate-circle" size={16} color="#38BDF8" />
+          <Ionicons name="navigate-circle" size={18} color={colors.textInverseSecondary} />
           <AppText style={styles.locationNoticeText}>
             {hasValidCoords
               ? `Tọa độ Robot: X: ${xM.toFixed(2)}m · Y: ${yM.toFixed(2)}m${roomName ? ` · ${roomName}` : ''}`
@@ -427,15 +433,15 @@ export function SosCallScreen({ route, navigation }: Props) {
           </AppText>
         </View>
 
-        {/* Card thông báo khi đã tiếp nhận */}
-        {isCallConnected && (
-          <View style={styles.nurseArrivingCard}>
-            <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+        {/* Card thông báo tiếp nhận */}
+        {isAcknowledged && (
+          <View style={styles.acknowledgedCard}>
+            <Ionicons name="checkmark-circle" size={22} color={colors.successText} />
             <View style={{ flex: 1 }}>
-              <AppText style={styles.nurseArrivingTitle}>
+              <AppText style={styles.acknowledgedTitle}>
                 NHÂN VIÊN Y TẾ ĐÃ TIẾP NHẬN SỰ CỐ
               </AppText>
-              <AppText style={styles.nurseArrivingSub}>
+              <AppText style={styles.acknowledgedSub}>
                 Bệnh nhân vui lòng giữ nguyên vị trí cạnh robot. Trợ giúp y tế đang được triển khai.
               </AppText>
             </View>
@@ -446,74 +452,33 @@ export function SosCallScreen({ route, navigation }: Props) {
       {/* 4. Bottom Control Section */}
       <View style={styles.bottomSection}>
         <View style={styles.timerRow}>
-          <View style={styles.waitingTimer}>
+          <View style={styles.timerBadge}>
             <View
               style={[
-                styles.orangeDot,
-                isCallConnected && { backgroundColor: '#10B981' },
-                sosState === 'FAILED' && { backgroundColor: '#EF4444' },
+                styles.timerDot,
+                isAcknowledged && { backgroundColor: '#10B981' },
+                sosState === 'FAILED' && { backgroundColor: colors.danger },
               ]}
             />
-            <AppText
-              style={[
-                styles.waitingTimerText,
-                isCallConnected && { color: '#34D399' },
-                sosState === 'FAILED' && { color: '#EF4444' },
-              ]}
-            >
-              {isCallConnected ? 'Đã tiếp nhận :' : 'Thời gian chờ :'} {formatTimer(callSeconds)}
+            <AppText style={styles.timerText}>
+              Thời gian mở màn hình SOS : {formatTimer(callSeconds)}
             </AppText>
           </View>
-          <AppText style={styles.hintCloseText}>Nhấn nút đỏ để kết thúc</AppText>
         </View>
 
-        {/* Call Action Buttons */}
-        <View style={styles.callActionsRow}>
-          {/* Mute Button */}
+        {/* End Call / Exit Button */}
+        <View style={styles.actionsRow}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => setIsMuted((v) => !v)}
-            style={({ pressed }) => [
-              styles.secondaryCallButton,
-              isMuted && styles.buttonActive,
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Ionicons
-              name={isMuted ? 'mic-off' : 'mic'}
-              size={24}
-              color={isMuted ? '#EF4444' : '#38BDF8'}
-            />
-          </Pressable>
-
-          {/* Hang up End Call Button */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Kết thúc cuộc gọi khẩn cấp"
+            accessibilityLabel="Đóng màn hình SOS khẩn cấp"
             onPress={handleEndCall}
             style={({ pressed }) => [
               styles.endCallButton,
-              pressed && { transform: [{ scale: 0.95 }], backgroundColor: '#DC2626' },
+              pressed && { transform: [{ scale: 0.96 }], opacity: 0.9 },
             ]}
           >
-            <Ionicons name="call" size={32} color="#FFFFFF" style={{ transform: [{ rotate: '135deg' }] }} />
-          </Pressable>
-
-          {/* Speaker Button */}
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => setIsSpeakerOn((v) => !v)}
-            style={({ pressed }) => [
-              styles.secondaryCallButton,
-              isSpeakerOn && styles.buttonActive,
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Ionicons
-              name={isSpeakerOn ? 'volume-high' : 'volume-mute'}
-              size={24}
-              color="#38BDF8"
-            />
+            <Ionicons name="close" size={26} color="#FFFFFF" />
+            <AppText style={styles.endCallText}>Kết thúc · Đóng SOS</AppText>
           </Pressable>
         </View>
       </View>
@@ -524,305 +489,292 @@ export function SosCallScreen({ route, navigation }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#071526',
+    backgroundColor: colors.callBg,
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: spacing.xl,
   },
   topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 8,
+    paddingTop: spacing.xs,
   },
   sosBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#450A0A',
+    gap: spacing.xs,
+    backgroundColor: 'rgba(198, 40, 40, 0.2)',
     borderWidth: 1,
-    borderColor: '#991B1B',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    borderColor: colors.danger,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
   },
   redDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#EF4444',
+    backgroundColor: colors.danger,
   },
   sosBadgeText: {
-    color: '#FECACA',
-    fontSize: 10,
+    color: '#FFFFFF',
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.8,
+    letterSpacing: 0.4,
   },
   apiStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#0F253E',
+    gap: spacing.xs,
+    backgroundColor: colors.darkRaised,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 16,
+    borderColor: '#3F3F46',
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   apiStatusPillText: {
-    color: '#E0F2FE',
-    fontSize: 10,
+    color: colors.textInverse,
+    fontSize: 12,
     fontWeight: '600',
   },
   apiConsoleBox: {
-    backgroundColor: '#0A1B2D',
-    borderRadius: 12,
+    backgroundColor: colors.hero,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderColor: colors.darkRaised,
     borderWidth: 1,
-    borderColor: '#1E3A5F',
-    padding: 10,
-    marginVertical: 6,
     gap: 4,
+    marginVertical: spacing.sm,
   },
   apiConsoleHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: 2,
+    paddingBottom: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.darkRaised,
   },
   apiConsoleTitle: {
-    fontSize: 10,
+    color: '#FFFFFF',
+    fontSize: 11,
     fontWeight: '800',
-    color: '#F87171',
-    letterSpacing: 0.5,
   },
   apiRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
-    alignItems: 'flex-start',
   },
   apiLabel: {
-    fontSize: 9,
+    color: colors.textInverseSecondary,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#64748B',
-    width: 80,
+    width: 85,
   },
   apiValue: {
-    fontSize: 9,
-    color: '#94A3B8',
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
     flex: 1,
-    fontFamily: 'monospace',
   },
   apiEndpoint: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#38BDF8',
+    color: colors.mapRoute,
+    fontSize: 10,
+    fontWeight: '600',
     flex: 1,
-    fontFamily: 'monospace',
   },
   apiStatusVal: {
-    fontSize: 9,
-    fontWeight: '700',
     color: '#34D399',
-    flex: 1,
+    fontSize: 10,
+    fontWeight: '700',
   },
   apiRes: {
-    fontSize: 9,
-    color: '#E2E8F0',
+    color: colors.textInverseSecondary,
+    fontSize: 10,
     flex: 1,
-    fontFamily: 'monospace',
   },
   centerContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    flex: 1,
-    gap: 8,
+    paddingVertical: spacing.lg,
+    gap: spacing.sm,
   },
   outerRing: {
-    width: 148,
-    height: 148,
-    borderRadius: 74,
-    borderWidth: 1.5,
-    borderColor: '#EF4444',
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    borderWidth: 2,
+    borderColor: colors.darkRaised,
+    backgroundColor: 'rgba(45, 45, 49, 0.4)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.08)',
-    marginBottom: 8,
+    marginBottom: spacing.xs,
+  },
+  outerRingSuccess: {
+    borderColor: '#166534',
+    backgroundColor: 'rgba(22, 101, 52, 0.2)',
+  },
+  outerRingFailed: {
+    borderColor: colors.danger,
+    backgroundColor: 'rgba(198, 40, 40, 0.2)',
   },
   middleRing: {
-    width: 124,
-    height: 124,
-    borderRadius: 62,
+    width: 104,
+    height: 104,
+    borderRadius: 52,
     borderWidth: 2,
-    borderColor: '#F87171',
+    borderColor: colors.darkRaised,
+    backgroundColor: 'rgba(45, 45, 49, 0.6)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+  },
+  middleRingSuccess: {
+    borderColor: '#24A148',
+    backgroundColor: 'rgba(36, 161, 72, 0.3)',
+  },
+  middleRingFailed: {
+    borderColor: '#991B1B',
+    backgroundColor: 'rgba(153, 27, 27, 0.3)',
   },
   avatarCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#E0F2FE',
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
   },
-  staffName: {
-    color: '#FFFFFF',
-    fontSize: 20,
+  statusTitle: {
+    color: colors.textInverse,
+    textAlign: 'center',
     fontWeight: '800',
-    letterSpacing: -0.3,
+  },
+  statusSubtitle: {
+    color: colors.textInverseSecondary,
     textAlign: 'center',
-    paddingHorizontal: 12,
-  },
-  staffRole: {
-    color: '#94A3B8',
-    fontSize: 13,
-    fontWeight: '500',
-    textAlign: 'center',
-    paddingHorizontal: 16,
-  },
-  statusBox: {
-    alignItems: 'center',
-    marginTop: 10,
-    gap: 6,
-  },
-  callingStatusText: {
-    color: '#F59E0B',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  waveWrap: {
-    marginTop: 4,
+    maxWidth: 420,
   },
   failedContainer: {
-    alignItems: 'center',
-    marginTop: 12,
+    marginTop: spacing.xs,
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#DC2626',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 22,
-    shadowColor: '#DC2626',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 4,
+    gap: spacing.sm,
+    backgroundColor: colors.danger,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radii.pill,
+    minHeight: 52,
   },
   retryButtonText: {
     color: '#FFFFFF',
-    fontSize: 14,
     fontWeight: '700',
+    fontSize: 16,
+  },
+  statusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  callingStatusText: {
+    color: colors.textInverseSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  waveWrap: {
+    paddingHorizontal: spacing.xs,
   },
   locationNotice: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 12,
-    backgroundColor: 'rgba(30, 58, 95, 0.6)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#1E3A5F',
+    gap: spacing.xs,
+    backgroundColor: colors.darkRaised,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radii.pill,
+    marginTop: spacing.xs,
   },
   locationNoticeText: {
-    color: '#7DD3FC',
-    fontSize: 11,
-    fontWeight: '500',
-  },
-  nurseArrivingCard: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    borderWidth: 1,
-    borderColor: '#059669',
-    borderRadius: 14,
-    padding: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 10,
-    width: '100%',
-  },
-  nurseArrivingTitle: {
-    color: '#34D399',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  nurseArrivingSub: {
-    color: '#A7F3D0',
-    fontSize: 10,
-    marginTop: 1,
-  },
-  bottomSection: {
-    gap: 16,
-  },
-  timerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  waitingTimer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  orangeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#F59E0B',
-  },
-  waitingTimerText: {
-    color: '#F59E0B',
-    fontSize: 11,
+    color: colors.textInverseSecondary,
+    fontSize: 12,
     fontWeight: '600',
   },
-  hintCloseText: {
-    color: '#64748B',
-    fontSize: 10,
-    fontWeight: '500',
-  },
-  callActionsRow: {
+  acknowledgedCard: {
     flexDirection: 'row',
-    justifyContent: 'space-evenly',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: 'rgba(22, 101, 52, 0.25)',
+    borderColor: '#166534',
+    borderWidth: 1,
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    maxWidth: 520,
+    marginTop: spacing.xs,
+  },
+  acknowledgedTitle: {
+    color: '#34D399',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  acknowledgedSub: {
+    color: '#E0E7FF',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  bottomSection: {
+    gap: spacing.md,
     alignItems: 'center',
   },
-  secondaryCallButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#132840',
+  timerRow: {
+    alignItems: 'center',
+  },
+  timerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  timerDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: colors.warningText,
+  },
+  timerText: {
+    color: colors.textInverseSecondary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  actionsRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#1E3A5F',
-  },
-  buttonActive: {
-    backgroundColor: '#1E3A5F',
-    borderColor: '#38BDF8',
   },
   endCallButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#EF4444',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#EF4444',
+    gap: spacing.sm,
+    backgroundColor: colors.danger,
+    minHeight: 56,
+    paddingHorizontal: spacing.xxl,
+    borderRadius: radii.pill,
+    shadowColor: colors.danger,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
     elevation: 6,
+  },
+  endCallText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
 });

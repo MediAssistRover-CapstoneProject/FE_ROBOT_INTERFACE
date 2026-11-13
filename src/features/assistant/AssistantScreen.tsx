@@ -10,10 +10,10 @@ import {
   View,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { AppText, Button, Notice, Screen } from '../../components/ui';
+import { AppText, Button, Card, Notice, Screen } from '../../components/ui';
 import { robotApiService } from '../../services/api/robotApiService';
 import { isDemoMode, robotService } from '../../services/robot';
-import { colors } from '../../theme';
+import { colors, radii, spacing, typography } from '../../theme';
 
 type Message = {
   id: number;
@@ -33,7 +33,7 @@ export function AssistantScreen() {
       id: 0,
       author: 'assistant',
       content:
-        'Xin chào! Bạn cần tìm khu vực nào hoặc muốn biết các bước khám ngoại trú?',
+        'Xin chào! Tôi là Trợ lý bệnh viện. Bạn cần tìm khoa phòng nào hoặc muốn biết thông tin quy trình khám ngoại trú?',
     },
   ]);
   const [draft, setDraft] = useState('');
@@ -94,7 +94,6 @@ export function AssistantScreen() {
         const result = await robotService.sendMessage(message);
         replyText = result.message?.trim() || '';
       } catch {
-        // Dự phòng phản hồi khi API trợ lý chưa kết nối riêng
         replyText = `Robot đã tiếp nhận câu hỏi: "${message}". Đang tra cứu thông tin và hướng dẫn bạn tại khu vực khám bệnh.`;
       }
 
@@ -125,12 +124,18 @@ export function AssistantScreen() {
   return (
     <Screen scroll={false}>
       <View style={styles.layout}>
+        {/* Short Dark Intro Hero Card */}
         {!keyboardVisible && (
-          <View style={styles.heading}>
-            <AppText variant="title">Hỏi trợ lý</AppText>
-            <AppText style={styles.description}>
-              Hỗ trợ tìm đường và tìm hiểu quy trình khám.
-            </AppText>
+          <View style={styles.heroCard}>
+            <View style={styles.heroIconCircle}>
+              <Ionicons name="chatbubbles" size={20} color={colors.textInverse} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <AppText variant="heading" style={styles.heroTitle}>Hỏi Trợ lý Bệnh viện</AppText>
+              <AppText variant="caption" style={styles.heroSub}>
+                Hỗ trợ tìm kiếm phòng khám, sơ đồ tầng và giải đáp quy trình khám bệnh.
+              </AppText>
+            </View>
           </View>
         )}
 
@@ -158,10 +163,23 @@ export function AssistantScreen() {
                   isUser ? styles.userMessage : styles.assistantMessage,
                 ]}
               >
-                <AppText variant="caption" style={styles.messageAuthor}>
+                <AppText
+                  variant="caption"
+                  style={[
+                    styles.messageAuthor,
+                    isUser && { color: colors.textInverseSecondary },
+                  ]}
+                >
                   {isUser ? 'Bạn' : 'Trợ lý bệnh viện'}
                 </AppText>
-                <AppText>{message.content}</AppText>
+                <AppText
+                  style={{
+                    color: isUser ? colors.textInverse : colors.textPrimary,
+                    lineHeight: 24,
+                  }}
+                >
+                  {message.content}
+                </AppText>
               </View>
             );
           })}
@@ -172,8 +190,10 @@ export function AssistantScreen() {
               accessibilityLabel="Trợ lý đang trả lời"
               accessibilityLiveRegion="polite"
             >
-              <ActivityIndicator size="small" color={colors.primary} />
-              <AppText variant="caption">Trợ lý đang trả lời…</AppText>
+              <ActivityIndicator size="small" color={colors.primaryAction} />
+              <AppText variant="caption" style={{ color: colors.textSecondary }}>
+                Trợ lý đang tìm câu trả lời…
+              </AppText>
             </View>
           )}
 
@@ -194,7 +214,9 @@ export function AssistantScreen() {
 
           {messages.length === 1 && (
             <View style={styles.suggestions}>
-              <AppText variant="caption">Chọn một câu hỏi để bắt đầu</AppText>
+              <AppText variant="caption" style={{ color: colors.textMuted, fontWeight: '600' }}>
+                CÂU HỎI GỢI Ý BẮT ĐẦU:
+              </AppText>
               {suggestions.map((suggestion) => (
                 <Pressable
                   key={suggestion}
@@ -208,9 +230,9 @@ export function AssistantScreen() {
                 >
                   <AppText style={styles.suggestionText}>{suggestion}</AppText>
                   <Ionicons
-                    name="add-outline"
-                    size={19}
-                    color={colors.primary}
+                    name="add-circle-outline"
+                    size={20}
+                    color={colors.textPrimary}
                     accessible={false}
                   />
                 </Pressable>
@@ -219,33 +241,31 @@ export function AssistantScreen() {
           )}
         </ScrollView>
 
+        {/* Composer Section */}
         <View style={styles.composer}>
-          <AppText variant="caption" style={styles.inputLabel}>
-            Nhập câu hỏi
-          </AppText>
           <TextInput
             ref={input}
             accessibilityLabel="Nhập câu hỏi cho trợ lý"
-            placeholder="Ví dụ: Tôi đăng ký khám ở đâu?"
-            placeholderTextColor={colors.muted}
+            placeholder="Nhập câu hỏi cần tìm đường, quy trình…"
+            placeholderTextColor={colors.textMuted}
             value={draft}
             onChangeText={setDraft}
             multiline
             maxLength={500}
             editable={!pending}
             style={styles.input}
-            textAlignVertical="top"
+            textAlignVertical="center"
           />
           <Button
             title={pending ? 'Đang gửi…' : 'Gửi câu hỏi'}
-            icon="send-outline"
+            icon="send"
             onPress={() => void sendMessage(draft)}
             disabled={!draft.trim() || pending}
             loading={pending}
           />
           {!keyboardVisible && (
             <AppText variant="caption" style={styles.voiceNote}>
-              Hiện bạn có thể nhập câu hỏi. Trò chuyện bằng giọng nói sẽ có sau.
+              Hiện bạn có thể nhập câu hỏi qua bàn phím.
             </AppText>
           )}
         </View>
@@ -255,12 +275,56 @@ export function AssistantScreen() {
 }
 
 const styles = StyleSheet.create({
-  layout: { flex: 1, minHeight: 0 },
-  heading: { gap: 6, paddingBottom: 16 },
-  description: { color: colors.muted },
-  conversation: { flex: 1 },
-  conversationContent: { gap: 14, paddingBottom: 20 },
-  message: { borderRadius: 16, padding: 14, gap: 6, maxWidth: '94%' },
+  layout: {
+    flex: 1,
+    minHeight: 0,
+    gap: spacing.md,
+  },
+  heroCard: {
+    backgroundColor: colors.hero,
+    borderRadius: radii.xl,
+    padding: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.darkRaised,
+  },
+  heroIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.darkRaised,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTitle: {
+    color: colors.textInverse,
+    fontWeight: '700',
+  },
+  heroSub: {
+    color: colors.textInverseSecondary,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  conversation: {
+    flex: 1,
+  },
+  conversationContent: {
+    gap: spacing.md,
+    paddingBottom: spacing.lg,
+  },
+  message: {
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    gap: 4,
+    maxWidth: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
   assistantMessage: {
     alignSelf: 'flex-start',
     backgroundColor: colors.surface,
@@ -269,46 +333,72 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: colors.primarySoft,
+    backgroundColor: colors.hero,
   },
-  messageAuthor: { color: colors.muted, fontWeight: '600' },
-  pending: { flexDirection: 'row', gap: 9, alignItems: 'center', padding: 4 },
-  retry: { gap: 10 },
-  suggestions: { gap: 9, paddingTop: 2 },
+  messageAuthor: {
+    color: colors.textMuted,
+    fontWeight: '700',
+  },
+  pending: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+    padding: spacing.xs,
+  },
+  retry: {
+    gap: spacing.sm,
+  },
+  suggestions: {
+    gap: spacing.sm,
+    paddingTop: spacing.xs,
+  },
   suggestion: {
-    minHeight: 48,
+    minHeight: 52,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
     backgroundColor: colors.surface,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: spacing.md,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  suggestionText: { flex: 1, color: colors.primary },
-  pressed: { opacity: 0.7 },
+  suggestionText: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontWeight: '600',
+  },
+  pressed: {
+    opacity: 0.75,
+  },
   composer: {
-    gap: 10,
+    gap: spacing.sm,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    paddingTop: 14,
-    paddingBottom: 6,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
-  inputLabel: { color: colors.text, fontWeight: '600' },
   input: {
-    minHeight: 58,
+    minHeight: 56,
     maxHeight: 110,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: radii.md,
     backgroundColor: colors.surface,
-    color: colors.text,
+    color: colors.textPrimary,
     fontSize: 16,
-    lineHeight: 23,
+    lineHeight: 22,
   },
-  voiceNote: { color: colors.muted },
+  voiceNote: {
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
 });

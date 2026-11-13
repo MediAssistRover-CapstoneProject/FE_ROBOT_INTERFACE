@@ -17,9 +17,9 @@ const theme = {
   colors: {
     ...DefaultTheme.colors,
     primary: colors.primary,
-    background: '#0F172A',
+    background: colors.background,
     card: colors.surface,
-    text: colors.text,
+    text: colors.textPrimary,
     border: colors.border,
   },
 };
@@ -41,12 +41,12 @@ export function AppNavigator() {
     <NavigationContainer theme={theme}>
       <Stack.Navigator
         screenOptions={{
-          headerTintColor: colors.primary,
+          headerTintColor: colors.textPrimary,
           headerStyle: { backgroundColor: colors.background },
-          headerTitleStyle: { fontSize: 17, fontWeight: '600', color: colors.text },
+          headerTitleStyle: { fontSize: 18, fontWeight: '700', color: colors.textPrimary },
           headerShadowVisible: false,
           headerBackButtonDisplayMode: 'minimal',
-          contentStyle: { backgroundColor: '#0F172A' },
+          contentStyle: { backgroundColor: colors.background },
           animation: 'none',
         }}
       >
