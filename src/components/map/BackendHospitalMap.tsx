@@ -98,6 +98,7 @@ export interface PresentationFeature {
   lineWidthM?: number;
   fontSizeM?: number;
   endpointId?: string | null;
+  endpointName?: string | null;
   roomId?: string | null;
   roomCode?: string | null;
   roomName?: string | null;
@@ -107,11 +108,26 @@ export interface PresentationFeature {
   roomPublicVisible?: boolean | null;
 }
 
+export interface PresentationSource {
+  mapId?: string;
+  assetHash?: string;
+  widthM?: number;
+  heightM?: number;
+  resolutionMPerPixel?: number;
+  originXM?: number;
+  originYM?: number;
+  originYawRad?: number;
+  frameId?: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
 export interface PresentationDocument {
   schemaVersion?: number;
   backgroundColor?: string;
   rotationDegrees?: number;
   features: PresentationFeature[];
+  source?: PresentationSource | null;
 }
 
 export interface BackendHospitalMapProps {
@@ -130,6 +146,7 @@ export interface BackendHospitalMapProps {
   guidance?: NavigationGuidanceResult | null;
   onStopEscort?: () => void;
   isStoppingEscort?: boolean;
+  onAutoAlignReady?: (align: SlamAutoAlignResult | null) => void;
 }
 
 interface MapPoint {
@@ -192,29 +209,40 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   guidance,
   onStopEscort,
   isStoppingEscort,
+  onAutoAlignReady,
 }) => {
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  const [viewportSize, setViewportSize] = useState<{ width: number; height: number } | null>(null);
   const [autoAlign, setAutoAlign] = useState<SlamAutoAlignResult | null>(null);
-  const [filterMode, setFilterMode] = useState<MapFilterMode>('otto_cad');
+  const [filterMode, setFilterMode] = useState<MapFilterMode>('raw');
 
-  const presentationRooms = useMemo(() => {
-    if (!presentation?.features) return [];
-    return presentation.features.filter(
-      (f) =>
-        (f.type === 'ROOM' || f.type === 'CORRIDOR') &&
-        Array.isArray(f.points) &&
-        f.points.length >= 3
-    );
-  }, [presentation]);
+  const presDoc = useMemo<PresentationDocument | null>(() => {
+    if (!presentation) return null;
+    const rawAny = presentation as any;
+    const doc = rawAny.document ?? presentation;
+    if (!doc || !Array.isArray(doc.features) || doc.features.length === 0) return null;
+    const src: PresentationSource | null = rawAny.source ?? doc.source ?? null;
+    if (src?.mapId && map.mapId && src.mapId !== map.mapId) {
+      return null;
+    }
+    return {
+      ...doc,
+      source: src,
+    };
+  }, [map.mapId, presentation]);
 
-  const presentationWalls = useMemo(() => {
-    if (!presentation?.features) return [];
-    return presentation.features.filter(
-      (f) => f.type === 'WALL' && Array.isArray(f.points) && f.points.length >= 2
+  const presSource = presDoc?.source ?? null;
+
+  const presentationFeatures = useMemo(() => {
+    if (!presDoc?.features) return [];
+    return presDoc.features.filter(
+      (f) => Array.isArray(f.points) && f.points.length > 0
     );
-  }, [presentation]);
+  }, [presDoc]);
+
+  const hasPresentation = presentationFeatures.length > 0;
 
   const imageUrl = useMemo(() => {
     if (customImageUrl) return customImageUrl;
@@ -255,6 +283,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
         const aligned = analyzeSlamMapGeometry(decoded.width, decoded.height, decoded.gray);
         if (!cancelled) {
           setAutoAlign(aligned);
+          onAutoAlignReady?.(aligned);
           setIsLoadingImage(false);
         }
       } catch {
@@ -335,7 +364,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   const geometry = useMemo(() => {
     const resolution = Math.max(
       Number(
-        metadata?.resolution ??
+        (hasPresentation ? presSource?.resolutionMPerPixel : undefined) ??
+          metadata?.resolution ??
           metadata?.resolution_m_per_pixel ??
           metadata?.resolutionMPerPixel ??
           map.resolutionMPerPixel
@@ -352,14 +382,16 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
 
     const pixelWidth = Math.max(
       1,
-      (autoAlign?.width && autoAlign.width > 0 ? autoAlign.width : 0) ||
+      (hasPresentation && presSource?.widthPx && presSource.widthPx > 0 ? presSource.widthPx : 0) ||
+        (autoAlign?.width && autoAlign.width > 0 ? autoAlign.width : 0) ||
         (metaWidthPx > 0 ? metaWidthPx : 0) ||
         (naturalSize?.width && naturalSize.width > 0 ? naturalSize.width : 0) ||
         (Number(map.widthM) > 0 ? Number(map.widthM) / resolution : 1)
     );
     const pixelHeight = Math.max(
       1,
-      (autoAlign?.height && autoAlign.height > 0 ? autoAlign.height : 0) ||
+      (hasPresentation && presSource?.heightPx && presSource.heightPx > 0 ? presSource.heightPx : 0) ||
+        (autoAlign?.height && autoAlign.height > 0 ? autoAlign.height : 0) ||
         (metaHeightPx > 0 ? metaHeightPx : 0) ||
         (naturalSize?.height && naturalSize.height > 0 ? naturalSize.height : 0) ||
         (Number(map.heightM) > 0 ? Number(map.heightM) / resolution : 1)
@@ -368,7 +400,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     const origin = Array.isArray(metadata?.origin) ? metadata.origin : [];
     const originX =
       Number(
-        metadata?.origin_x_m ??
+        (hasPresentation ? presSource?.originXM : undefined) ??
+          metadata?.origin_x_m ??
           metadata?.originXM ??
           metadata?.originX ??
           origin[0] ??
@@ -376,7 +409,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       ) || 0;
     const originY =
       Number(
-        metadata?.origin_y_m ??
+        (hasPresentation ? presSource?.originYM : undefined) ??
+          metadata?.origin_y_m ??
           metadata?.originYM ??
           metadata?.originY ??
           origin[1] ??
@@ -384,7 +418,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       ) || 0;
     const originYaw =
       Number(
-        metadata?.origin_yaw_rad ??
+        (hasPresentation ? presSource?.originYawRad : undefined) ??
+          metadata?.origin_yaw_rad ??
           metadata?.originYawRad ??
           metadata?.originYaw ??
           metadata?.yaw ??
@@ -394,21 +429,19 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     const cosO = Math.cos(originYaw);
     const sinO = Math.sin(originYaw);
 
+    // Góc xoay chuẩn từ bản đồ /presentation/published hoặc căn chỉnh tường SLAM (-4.5°)
+    const docRotation = presDoc?.rotationDegrees;
     const rotationDeg =
-      presentation?.rotationDegrees !== undefined
-        ? presentation.rotationDegrees
+      hasPresentation && typeof docRotation === 'number' && Number.isFinite(docRotation)
+        ? docRotation
         : autoAlign
         ? autoAlign.rotationDeg
-        : -19.9;
+        : -4.5;
     const rotationRad = (rotationDeg * Math.PI) / 180;
     const cosR = Math.cos(rotationRad);
     const sinR = Math.sin(rotationRad);
 
-    const worldToRotatedCenter = (point: MapPoint) => {
-      const dx = point.x - originX;
-      const dy = point.y - originY;
-      const u = (cosO * dx + sinO * dy) / resolution;
-      const v = pixelHeight - (-sinO * dx + cosO * dy) / resolution;
+    const uvToRotatedCenter = (u: number, v: number) => {
       const relU = u - pixelWidth / 2;
       const relV = v - pixelHeight / 2;
       return {
@@ -419,40 +452,89 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       };
     };
 
-    let xMin = autoAlign ? autoAlign.xMin : -pixelWidth * 0.45;
-    let xMax = autoAlign ? autoAlign.xMax : pixelWidth * 0.45;
-    let yMin = autoAlign ? autoAlign.yMin : -pixelHeight * 0.42;
-    let yMax = autoAlign ? autoAlign.yMax : pixelHeight * 0.42;
+    const worldToRotatedCenter = (point: MapPoint) => {
+      const dx = point.x - originX;
+      const dy = point.y - originY;
+      const u = (cosO * dx + sinO * dy) / resolution;
+      const v = pixelHeight - (-sinO * dx + cosO * dy) / resolution;
+      return uvToRotatedCenter(u, v);
+    };
 
-    const expandWithPoint = (pt: MapPoint, margin = 6) => {
-      const { rx, ry } = worldToRotatedCenter(pt);
+    // Tọa độ trong presentation/published là mét tương đối từ góc gốc bản đồ (dx, dy)
+    const presentationToRotatedCenter = (point: MapPoint) => {
+      const u = point.x / resolution;
+      const v = pixelHeight - point.y / resolution;
+      return uvToRotatedCenter(u, v);
+    };
+
+    let xMin = hasPresentation ? Infinity : autoAlign ? autoAlign.xMin : -pixelWidth * 0.45;
+    let xMax = hasPresentation ? -Infinity : autoAlign ? autoAlign.xMax : pixelWidth * 0.45;
+    let yMin = hasPresentation ? Infinity : autoAlign ? autoAlign.yMin : -pixelHeight * 0.42;
+    let yMax = hasPresentation ? -Infinity : autoAlign ? autoAlign.yMax : pixelHeight * 0.42;
+
+    const expandRotated = (rx: number, ry: number, margin = 6) => {
       if (rx - margin < xMin) xMin = rx - margin;
       if (rx + margin > xMax) xMax = rx + margin;
       if (ry - margin < yMin) yMin = ry - margin;
       if (ry + margin > yMax) yMax = ry + margin;
     };
 
-    if (presentation?.features) {
-      presentation.features.forEach((feature) => {
+    if (hasPresentation) {
+      presentationFeatures.forEach((feature) => {
         feature.points.forEach((p) => {
-          expandWithPoint({ x: originX + p.x, y: originY + p.y }, 8);
+          const { rx, ry } = presentationToRotatedCenter(p);
+          expandRotated(rx, ry, 3);
         });
       });
     }
 
+    const expandWithPoint = (pt: MapPoint, margin = 3) => {
+      const { rx, ry } = worldToRotatedCenter(pt);
+      expandRotated(rx, ry, margin);
+    };
+
     visibleEndpoints.forEach((ep) =>
-      expandWithPoint({ x: Number(ep.xM), y: Number(ep.yM) }, 6)
+      expandWithPoint({ x: Number(ep.xM), y: Number(ep.yM) }, 4)
     );
-    visibleZones.forEach(({ points }) => points.forEach((p) => expandWithPoint(p, 6)));
+    visibleZones.forEach(({ points }) => points.forEach((p) => expandWithPoint(p, 3)));
     if (validRobotPose) {
-      expandWithPoint({ x: validRobotPose.xM, y: validRobotPose.yM }, 6);
+      expandWithPoint({ x: validRobotPose.xM, y: validRobotPose.yM }, 5);
     }
+    if (validPlannedPath) {
+      validPlannedPath.forEach((pt) => expandWithPoint({ x: pt.xM, y: pt.yM }, 4));
+    }
+
+    if (!Number.isFinite(xMin) || !Number.isFinite(xMax)) {
+      xMin = -pixelWidth * 0.45;
+      xMax = pixelWidth * 0.45;
+    }
+    if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) {
+      yMin = -pixelHeight * 0.42;
+      yMax = pixelHeight * 0.42;
+    }
+
+    // Khoảng đệm đối xứng gọn quanh bản đồ để hiển thị to, rõ và cân chính giữa
+    const pad = 2;
+    xMin -= pad;
+    xMax += pad;
+    yMin -= pad;
+    yMax += pad;
 
     const viewWidth = Math.max(10, xMax - xMin);
     const viewHeight = Math.max(10, yMax - yMin);
 
     const toViewPixel = (point: MapPoint) => {
       const { rx, ry, rawU, rawV } = worldToRotatedCenter(point);
+      return {
+        x: rx - xMin,
+        y: ry - yMin,
+        rawU,
+        rawV,
+      };
+    };
+
+    const presentationToViewPixel = (point: MapPoint) => {
+      const { rx, ry, rawU, rawV } = presentationToRotatedCenter(point);
       return {
         x: rx - xMin,
         y: ry - yMin,
@@ -482,14 +564,19 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       viewWidth,
       viewHeight,
       toViewPixel,
+      presentationToViewPixel,
       toViewHeadingRad,
     };
   }, [
     autoAlign,
+    hasPresentation,
     map,
     metadata,
     naturalSize,
-    presentation,
+    presDoc,
+    presSource,
+    presentationFeatures,
+    validPlannedPath,
     validRobotPose,
     visibleEndpoints,
     visibleZones,
@@ -505,27 +592,69 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   const viewHeight = geometry.viewHeight;
   const aspectRatio = viewWidth / viewHeight;
 
+  const fittedBox = useMemo(() => {
+    if (!viewportSize || viewportSize.width <= 8 || viewportSize.height <= 8) {
+      return null;
+    }
+    const availW = viewportSize.width - 8;
+    const availH = viewportSize.height - 8;
+    const containerAspect = availW / availH;
+    if (containerAspect > aspectRatio) {
+      const h = availH;
+      return { width: h * aspectRatio, height: h };
+    }
+    const w = availW;
+    return { width: w, height: w / aspectRatio };
+  }, [aspectRatio, viewportSize]);
+
   const imageWidthPct = (geometry.pixelWidth / viewWidth) * 100;
   const imageHeightPct = (geometry.pixelHeight / viewHeight) * 100;
   const imageLeftPct = ((-geometry.xMin - geometry.pixelWidth / 2) / viewWidth) * 100;
   const imageTopPct = ((-geometry.yMin - geometry.pixelHeight / 2) / viewHeight) * 100;
 
   const gridStepPx = Math.max(12, 1 / geometry.resolution);
+  const mapBgColor =
+    filterMode === 'otto_dark'
+      ? '#1E242B'
+      : hasPresentation
+      ? presDoc?.backgroundColor || '#F8FAFC'
+      : '#E5E7EB';
 
   return (
-    <View style={styles.outerWrapper}>
-      <View
-        style={[
-          styles.canvasContainer,
-          {
-            aspectRatio,
-            backgroundColor: filterMode === 'otto_dark' ? '#1E242B' : '#F8FAFC',
-          },
-        ]}
-      >
-        <View style={styles.gridBackground} />
+    <View style={[styles.outerWrapper, { backgroundColor: mapBgColor }]}>
+      {/* Banner chỉ dẫn điều hướng đặt gọn phía trên bản đồ để không che khuất phòng/tường */}
+      {guidance && guidance.state !== 'IDLE' && (
+        <NavigationGuidanceBanner
+          guidance={guidance}
+          onStop={onStopEscort}
+          isStopping={isStoppingEscort}
+        />
+      )}
 
-        {!imageFailed && (
+      <View
+        style={styles.canvasViewport}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          if (width > 0 && height > 0) {
+            setViewportSize((prev) =>
+              prev && Math.abs(prev.width - width) < 1 && Math.abs(prev.height - height) < 1
+                ? prev
+                : { width, height }
+            );
+          }
+        }}
+      >
+        <View style={styles.canvasCenterLayer}>
+          {fittedBox && (
+            <View
+              style={[
+                styles.canvasContainer,
+                { width: fittedBox.width, height: fittedBox.height, backgroundColor: mapBgColor },
+              ]}
+            >
+              {!hasPresentation && <View style={styles.gridBackground} />}
+
+        {!hasPresentation && !imageFailed && (
           <Image
             source={mapImageSource}
             resizeMode="stretch"
@@ -536,7 +665,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                 height: `${imageHeightPct}%`,
                 left: `${imageLeftPct}%`,
                 top: `${imageTopPct}%`,
-                opacity: filterMode === 'otto_dark' ? 0.88 : 0.98,
+                opacity: filterMode === 'otto_dark' ? 0.88 : 1,
                 transform: [{ rotate: `${geometry.rotationDeg}deg` }],
               },
             ]}
@@ -555,7 +684,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
           />
         )}
 
-        {filterMode !== 'raw' && (
+        {!hasPresentation && filterMode !== 'raw' && (
           <View
             pointerEvents="none"
             style={[
@@ -569,7 +698,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
           width="100%"
           height="100%"
           viewBox={`0 0 ${viewWidth} ${viewHeight}`}
-          preserveAspectRatio="none"
+          preserveAspectRatio="xMidYMid meet"
           style={styles.fullSize}
         >
           <Defs>
@@ -642,7 +771,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             </Pattern>
           </Defs>
 
-          {filterMode !== 'raw' && (
+          {(hasPresentation || filterMode !== 'raw') && (
             <Rect
               x="0"
               y="0"
@@ -652,116 +781,274 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             />
           )}
 
-          {/* Sơ đồ CAD Kiến trúc (Presentation Map): Tường (Walls) */}
-          {presentationWalls.map((wall, idx) => {
-            const pixelPoints = wall.points.map((p) =>
-              geometry.toViewPixel({
-                x: geometry.originX + p.x,
-                y: geometry.originY + p.y,
+          {/* Sơ đồ vector chuẩn kiến trúc từ GET /maps/{mapId}/presentation/published */}
+          {hasPresentation &&
+            presentationFeatures
+              .slice()
+              .sort((a, b) => {
+                const order: Record<string, number> = {
+                  CORRIDOR: 0,
+                  ROOM: 1,
+                  WALL: 2,
+                  DOOR: 3,
+                  LANDMARK: 4,
+                  LABEL: 5,
+                };
+                return (order[a.type] ?? 9) - (order[b.type] ?? 9);
               })
-            );
-            const pointsStr = pixelPoints.map((p) => `${p.x},${p.y}`).join(' ');
-            return (
-              <Polyline
-                key={wall.id || `pres-wall-${idx}`}
-                points={pointsStr}
-                fill="none"
-                stroke={wall.color || '#334155'}
-                strokeWidth={Math.max(1.8, viewWidth / 140)}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            );
-          })}
+              .map((feature, idx) => {
+                const pixelPoints = feature.points.map(geometry.presentationToViewPixel);
+                if (pixelPoints.length === 0) return null;
+                const pointsStr = pixelPoints.map((p) => `${p.x},${p.y}`).join(' ');
+                const strokePx = Math.max(
+                  1.2,
+                  (Number(feature.lineWidthM) || 0.04) / geometry.resolution
+                );
+                const fontPx = Math.max(
+                  4.5,
+                  Math.min(11, (Number(feature.fontSizeM) || 0.11) / geometry.resolution)
+                );
+                const featureColor = feature.color || '#334155';
+                const isDark = filterMode === 'otto_dark';
 
-          {/* Sơ đồ CAD Kiến trúc (Presentation Map): Các phòng khám dạng khối màu sắc sắc nét */}
-          {presentationRooms.map((room) => {
-            const pixelPoints = room.points.map((p) =>
-              geometry.toViewPixel({
-                x: geometry.originX + p.x,
-                y: geometry.originY + p.y,
-              })
+                if (feature.type === 'ROOM' || feature.type === 'CORRIDOR') {
+                  const centerX =
+                    pixelPoints.reduce((s, p) => s + p.x, 0) / pixelPoints.length;
+                  const centerY =
+                    pixelPoints.reduce((s, p) => s + p.y, 0) / pixelPoints.length;
+
+                  const matchEp =
+                    feature.type === 'ROOM'
+                      ? visibleEndpoints.find((e) => {
+                          if (feature.endpointId && e.endpointId === feature.endpointId) {
+                            return true;
+                          }
+                          const epCode = (e.endpointCode || '').trim().toLowerCase();
+                          const rCode = (feature.roomCode || '').trim().toLowerCase();
+                          const rLabel = (feature.label || feature.roomName || '')
+                            .trim()
+                            .toLowerCase();
+                          if (rCode && epCode === rCode) return true;
+                          if (rLabel && epCode === rLabel) return true;
+                          if (
+                            rLabel &&
+                            (e.endpointName || '').toLowerCase().includes(rLabel)
+                          ) {
+                            return true;
+                          }
+                          return false;
+                        })
+                      : undefined;
+
+                  const isSelected = Boolean(
+                    selectedEndpointId &&
+                      ((feature.endpointId && selectedEndpointId === feature.endpointId) ||
+                        (matchEp &&
+                          (selectedEndpointId === matchEp.endpointId ||
+                            selectedEndpointId.toLowerCase() ===
+                              (matchEp.endpointCode || '').toLowerCase())) ||
+                        (feature.roomCode &&
+                          selectedEndpointId.toLowerCase() ===
+                            feature.roomCode.toLowerCase()) ||
+                        (feature.label &&
+                          selectedEndpointId.toLowerCase() ===
+                            feature.label.toLowerCase()))
+                  );
+
+                  const labelText = feature.label || feature.roomName || '';
+                  const minRoomX = Math.min(...pixelPoints.map((p) => p.x));
+                  const maxRoomX = Math.max(...pixelPoints.map((p) => p.x));
+                  const roomBoxW = Math.max(12, maxRoomX - minRoomX);
+                  const roomFontPx = labelText
+                    ? Math.min(
+                        fontPx,
+                        Math.max(3.6, (roomBoxW * 0.88) / Math.max(3, labelText.length * 0.56))
+                      )
+                    : fontPx;
+                  const fillColor =
+                    feature.type === 'CORRIDOR'
+                      ? isDark
+                        ? 'rgba(148, 163, 184, 0.16)'
+                        : 'rgba(226, 232, 240, 0.55)'
+                      : `${featureColor}${isDark ? '38' : isSelected ? '48' : '26'}`;
+
+                  return (
+                    <G
+                      key={feature.id || `pres-room-${idx}`}
+                      onPress={
+                        matchEp && onSelectEndpoint
+                          ? () => onSelectEndpoint(matchEp)
+                          : undefined
+                      }
+                    >
+                      {pixelPoints.length >= 3 ? (
+                        <Polygon
+                          points={pointsStr}
+                          fill={fillColor}
+                          stroke={featureColor}
+                          strokeWidth={
+                            isSelected
+                              ? Math.max(2.0, strokePx)
+                              : Math.max(0.9, strokePx * 0.75)
+                          }
+                          strokeLinejoin="round"
+                        />
+                      ) : (
+                        <Polyline
+                          points={pointsStr}
+                          fill="none"
+                          stroke={featureColor}
+                          strokeWidth={strokePx}
+                          strokeLinecap="round"
+                        />
+                      )}
+                      {labelText ? (
+                        <G pointerEvents="none">
+                          <SvgText
+                            x={centerX}
+                            y={centerY + roomFontPx * 0.35}
+                            textAnchor="middle"
+                            fontSize={roomFontPx}
+                            fontWeight="700"
+                            fill="none"
+                            stroke={
+                              isDark
+                                ? 'rgba(15, 23, 42, 0.9)'
+                                : 'rgba(255, 255, 255, 0.92)'
+                            }
+                            strokeWidth={1.6}
+                            strokeLinejoin="round"
+                          >
+                            {labelText}
+                          </SvgText>
+                          <SvgText
+                            x={centerX}
+                            y={centerY + roomFontPx * 0.35}
+                            textAnchor="middle"
+                            fontSize={roomFontPx}
+                            fontWeight="700"
+                            fill={isDark ? '#F8FAFC' : '#0F172A'}
+                          >
+                            {labelText}
+                          </SvgText>
+                        </G>
+                      ) : null}
+                    </G>
+                  );
+                }
+
+                if (feature.type === 'WALL' || feature.type === 'DOOR') {
+                  return (
+                    <Polyline
+                      key={feature.id || `pres-wall-${idx}`}
+                      points={pointsStr}
+                      fill="none"
+                      stroke={
+                        isDark && featureColor === '#334155' ? '#CBD5E1' : featureColor
+                      }
+                      strokeWidth={feature.type === 'DOOR' ? strokePx * 1.15 : strokePx}
+                      strokeDasharray={feature.type === 'DOOR' ? '3,2' : undefined}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  );
+                }
+
+                const pt0 = pixelPoints[0];
+                if (!pt0) return null;
+                const pointLabel = feature.label || feature.endpointName || '';
+                return (
+                  <G key={feature.id || `pres-pt-${idx}`}>
+                    {feature.type === 'LANDMARK' && (
+                      <Circle cx={pt0.x} cy={pt0.y} r={2.5} fill={featureColor} />
+                    )}
+                    {pointLabel ? (
+                      <SvgText
+                        x={pt0.x}
+                        y={pt0.y - 3.5}
+                        fontSize={fontPx}
+                        fontWeight="600"
+                        fill={isDark ? '#E2E8F0' : featureColor}
+                        textAnchor="middle"
+                      >
+                        {pointLabel}
+                      </SvgText>
+                    ) : null}
+                  </G>
+                );
+              })}
+
+          {/* 1. Các phân khu Traffic Control (Zones) chuẩn map-navigation.js */}
+          {visibleZones.map(({ zone, points }) => {
+            const pixelPoints = points.map(geometry.toViewPixel);
+            const pointsText = pixelPoints.map((point) => `${point.x},${point.y}`).join(' ');
+            const firstPt = pixelPoints[0];
+            const zoneEndpoint = visibleEndpoints.find(
+              (endpoint) => endpoint.zoneId === zone.zoneId
             );
-            const pointsStr = pixelPoints.map((p) => `${p.x},${p.y}`).join(' ');
-            const centerX =
-              pixelPoints.reduce((s, p) => s + p.x, 0) / pixelPoints.length;
-            const centerY =
-              pixelPoints.reduce((s, p) => s + p.y, 0) / pixelPoints.length;
-
-            const matchEp = visibleEndpoints.find((e) => {
-              if (room.endpointId && e.endpointId === room.endpointId) return true;
-              const epCode = (e.endpointCode || '').trim().toLowerCase();
-              const rCode = (room.roomCode || '').trim().toLowerCase();
-              const rLabel = (room.label || '').trim().toLowerCase();
-              if (rCode && epCode === rCode) return true;
-              if (rLabel && epCode === rLabel) return true;
-              if (rLabel && (e.endpointName || '').toLowerCase().includes(rLabel)) return true;
-              return false;
-            });
-
-            const isSelected = Boolean(
-              selectedEndpointId &&
-                ((room.endpointId && selectedEndpointId === room.endpointId) ||
-                  (matchEp &&
-                    (selectedEndpointId === matchEp.endpointId ||
-                      selectedEndpointId.toLowerCase() ===
-                        (matchEp.endpointCode || '').toLowerCase())) ||
-                  (room.roomCode &&
-                    selectedEndpointId.toLowerCase() === room.roomCode.toLowerCase()) ||
-                  (room.label &&
-                    selectedEndpointId.toLowerCase() === room.label.toLowerCase()))
-            );
-
-            const roomColor = room.color || '#3B82F6';
-            const labelFontSize = Math.max(4.6, viewWidth / 34);
+            const isKeepOut = zone.zoneType === 'KEEP_OUT';
+            const fillStyle =
+              !hasPresentation && filterMode === 'raw'
+                ? isKeepOut
+                  ? 'rgba(210, 30, 30, 0.22)'
+                  : 'rgba(240, 170, 0, 0.23)'
+                : isKeepOut
+                ? 'url(#ottoHazardStripe)'
+                : 'url(#ottoSpeedPattern)';
+            const strokeColor =
+              !hasPresentation && filterMode === 'raw'
+                ? isKeepOut
+                  ? '#C22222'
+                  : '#AA7400'
+                : isKeepOut
+                ? '#EF4444'
+                : '#0284C7';
+            const speedVal = zone.speedLimitMps ?? (zone as any).maxLinearSpeedMps;
+            const speedSuffix =
+              zone.zoneType === 'SPEED' && speedVal
+                ? ` (${speedVal} m/s)`
+                : '';
+            const zoneLabel = `${(zone.zoneName || zone.zoneCode || '').trim()}${speedSuffix}`;
+            const zoneFontSize = Math.max(3.6, viewWidth / 44);
 
             return (
               <G
-                key={room.id}
+                key={zone.zoneId || zone.zoneCode}
                 onPress={
-                  matchEp && onSelectEndpoint
-                    ? () => onSelectEndpoint(matchEp)
+                  zoneEndpoint && onSelectEndpoint
+                    ? () => onSelectEndpoint(zoneEndpoint)
                     : undefined
                 }
               >
-                {/* Khối phòng màu pastel nổi bật */}
                 <Polygon
-                  points={pointsStr}
-                  fill={roomColor}
-                  fillOpacity={isSelected ? 0.35 : 0.18}
-                  stroke={roomColor}
-                  strokeWidth={
-                    isSelected
-                      ? Math.max(2.4, viewWidth / 100)
-                      : Math.max(1.4, viewWidth / 160)
-                  }
+                  points={pointsText}
+                  fill={fillStyle}
+                  stroke={strokeColor}
+                  strokeWidth={Math.max(0.9, viewWidth / 160)}
                   strokeLinejoin="round"
                 />
-                {/* Tên phòng với viền trắng tương phản cao (Halo) */}
-                {room.label ? (
+                {firstPt && zoneLabel ? (
                   <G pointerEvents="none">
                     <SvgText
-                      x={centerX}
-                      y={centerY + labelFontSize * 0.32}
-                      textAnchor="middle"
-                      fontSize={labelFontSize}
-                      fontWeight="800"
+                      x={firstPt.x + 2}
+                      y={firstPt.y - 2}
+                      fontSize={zoneFontSize}
+                      fontWeight="700"
                       fill="#FFFFFF"
                       stroke="#FFFFFF"
-                      strokeWidth={Math.max(2.4, viewWidth / 75)}
+                      strokeWidth={Math.max(1.6, viewWidth / 110)}
                       strokeLinejoin="round"
                     >
-                      {room.label}
+                      {zoneLabel}
                     </SvgText>
                     <SvgText
-                      x={centerX}
-                      y={centerY + labelFontSize * 0.32}
-                      textAnchor="middle"
-                      fontSize={labelFontSize}
-                      fontWeight="800"
-                      fill="#0F172A"
+                      x={firstPt.x + 2}
+                      y={firstPt.y - 2}
+                      fontSize={zoneFontSize}
+                      fontWeight="700"
+                      fill="#1F2430"
                     >
-                      {room.label}
+                      {zoneLabel}
                     </SvgText>
                   </G>
                 ) : null}
@@ -769,71 +1056,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })}
 
-          {/* 1. Các phân khu Traffic Control (Zones) */}
-          {visibleZones.map(({ zone, points }) => {
-            const pixelPoints = points.map(geometry.toViewPixel);
-            const pointsText = pixelPoints.map((point) => `${point.x},${point.y}`).join(' ');
-            const labelX =
-              pixelPoints.reduce((sum, point) => sum + point.x, 0) / pixelPoints.length;
-            const labelY =
-              pixelPoints.reduce((sum, point) => sum + point.y, 0) / pixelPoints.length;
-            const zoneEndpoint = visibleEndpoints.find(
-              (endpoint) => endpoint.zoneId === zone.zoneId
-            );
-            const isKeepOut = zone.zoneType === 'KEEP_OUT';
-            const strokeColor = isKeepOut ? '#EF4444' : '#0284C7';
-            const innerDashColor = isKeepOut ? '#FCA5A5' : '#38BDF8';
-            const badgeBg = isKeepOut
-              ? 'rgba(153, 27, 27, 0.90)'
-              : 'rgba(3, 105, 161, 0.90)';
-            const zoneLabel = (zone.zoneName || zone.zoneCode || '').trim();
-            const zoneFontSize = Math.max(4.6, viewWidth / 38);
-            const badgeW = Math.max(zoneLabel.length * zoneFontSize * 0.58 + 7, 18);
-            const badgeH = zoneFontSize + 3.4;
-
-            return (
-              <G
-                key={zone.zoneId || zone.zoneCode}
-                onPress={zoneEndpoint && onSelectEndpoint ? () => onSelectEndpoint(zoneEndpoint) : undefined}
-              >
-                <Polygon
-                  points={pointsText}
-                  fill={isKeepOut ? 'url(#ottoHazardStripe)' : 'url(#ottoSpeedPattern)'}
-                  stroke={strokeColor}
-                  strokeWidth={Math.max(1.3, viewWidth / 165)}
-                />
-                <Polygon
-                  points={pointsText}
-                  fill="none"
-                  stroke={innerDashColor}
-                  strokeWidth={Math.max(0.7, viewWidth / 280)}
-                  strokeDasharray="3,2"
-                />
-                <Rect
-                  x={labelX - badgeW / 2}
-                  y={labelY - badgeH / 2}
-                  width={badgeW}
-                  height={badgeH}
-                  rx={badgeH / 2}
-                  fill={badgeBg}
-                  stroke={innerDashColor}
-                  strokeWidth={0.5}
-                />
-                <SvgText
-                  x={labelX}
-                  y={labelY + zoneFontSize * 0.32}
-                  textAnchor="middle"
-                  fontSize={zoneFontSize}
-                  fontWeight="800"
-                  fill="#FFFFFF"
-                >
-                  {zoneLabel}
-                </SvgText>
-              </G>
-            );
-          })}
-
-          {/* 2. Đường dẫn Nav2 phát sáng & Tách chặng theo Guidance */}
+          {/* 2. Đường dẫn Nav2 (Casing trắng + Đoạn đã đi #A9BFD8 + Đoạn sắp đi #1877ED + Điểm đích Đỏ + Nút rẽ) */}
           {validPlannedPath && (() => {
             const isTracking =
               guidance?.state === 'TRACKING' &&
@@ -856,7 +1079,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                 ]
               : [];
 
-            const completedPoly = completedPoints
+            const fullPoly = validPlannedPath
               .map((pt) => {
                 const p = geometry.toViewPixel({ x: Number(pt.xM), y: Number(pt.yM) });
                 return `${p.x},${p.y}`;
@@ -873,80 +1096,111 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             const lastPt = validPlannedPath[validPlannedPath.length - 1];
             const endPixel = lastPt ? geometry.toViewPixel({ x: lastPt.xM, y: lastPt.yM }) : null;
 
+            const destEndpoint = lastPt
+              ? visibleEndpoints.find(
+                  (ep) =>
+                    Math.hypot(Number(ep.xM) - lastPt.xM, Number(ep.yM) - lastPt.yM) <= 0.12
+                )
+              : undefined;
+            const destLabel = (
+              destEndpoint?.endpointName ||
+              destEndpoint?.endpointCode ||
+              ''
+            ).trim();
+            const destFontSize = Math.max(3.8, viewWidth / 44);
+            const destPinRadius = Math.max(3.0, viewWidth / 48);
+
             // Điểm rẽ tiếp theo (turn indicator badge trên bản đồ)
             const turnPixel =
-              guidance?.state === 'TRACKING' && guidance.turn
+              guidance?.state === 'TRACKING' &&
+              guidance.turn &&
+              guidance.direction !== 'STRAIGHT'
                 ? geometry.toViewPixel({ x: guidance.turn.xM, y: guidance.turn.yM })
                 : null;
-            const turnBadgeRadius = Math.max(9, viewWidth / 48);
+            const turnBadgeRadius = Math.max(4.8, viewWidth / 30);
 
             return (
               <G>
-                {/* 2a. Đoạn đường đã đi qua: màu xanh nhạt (#A9BFD8) */}
-                {isTracking && completedPoly.length > 0 && (
+                {/* 2a. Viền trắng bao ngoài toàn tuyến và phần đường đã đi qua (#A9BFD8) */}
+                <Polyline
+                  points={fullPoly}
+                  fill="none"
+                  stroke="#FFFFFF"
+                  strokeWidth={Math.max(4.0, viewWidth / 34)}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                {completedPoints.length >= 2 && (
                   <Polyline
-                    points={completedPoly}
+                    points={fullPoly}
                     fill="none"
                     stroke="#A9BFD8"
-                    strokeWidth={Math.max(2.4, viewWidth / 110)}
+                    strokeWidth={Math.max(2.4, viewWidth / 52)}
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    opacity={0.65}
                   />
                 )}
 
-                {/* 2b. Đoạn sắp đi: Hào quang phát sáng xanh dương đậm */}
-                <Polyline
-                  points={upcomingPoly}
-                  fill="none"
-                  stroke="rgba(24, 119, 237, 0.40)"
-                  strokeWidth={Math.max(5.0, viewWidth / 55)}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-
-                {/* 2c. Đoạn sắp đi: Đường nét chính màu xanh đậm (#1877ED) */}
-                <Polyline
-                  points={upcomingPoly}
-                  fill="none"
-                  stroke="#1877ED"
-                  strokeWidth={Math.max(2.8, viewWidth / 100)}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-
-                {/* 2d. Đường nét đứt màu trắng nổi bật ở giữa */}
+                {/* 2b. Đoạn sắp đi: Viền trắng + Đường nét chính màu xanh đậm (#1877ED) */}
                 <Polyline
                   points={upcomingPoly}
                   fill="none"
                   stroke="#FFFFFF"
-                  strokeWidth={Math.max(1.1, viewWidth / 220)}
-                  strokeDasharray="5,4"
+                  strokeWidth={Math.max(4.2, viewWidth / 32)}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <Polyline
+                  points={upcomingPoly}
+                  fill="none"
+                  stroke="#1877ED"
+                  strokeWidth={Math.max(2.6, viewWidth / 48)}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 />
 
-                {/* 2e. Điểm ghim đích nổi bật (Destination Pin: Đỏ #D94B3D viền trắng) */}
+                {/* 2c. Điểm ghim đích nổi bật (Destination Pin: Đỏ #D94B3D viền trắng + nhãn tên điểm đến) */}
                 {endPixel && (
                   <G>
                     <Circle
                       cx={endPixel.x}
                       cy={endPixel.y}
-                      r={Math.max(6.5, viewWidth / 55)}
+                      r={destPinRadius}
                       fill="#D94B3D"
                       stroke="#FFFFFF"
-                      strokeWidth={2}
+                      strokeWidth={Math.max(1.2, viewWidth / 115)}
                     />
-                    <Circle
-                      cx={endPixel.x}
-                      cy={endPixel.y}
-                      r={Math.max(2.2, viewWidth / 150)}
-                      fill="#FFFFFF"
-                    />
+                    {destLabel ? (
+                      <G pointerEvents="none">
+                        <SvgText
+                          x={endPixel.x}
+                          y={endPixel.y - destPinRadius - 2.5}
+                          textAnchor="middle"
+                          fontSize={destFontSize}
+                          fontWeight="800"
+                          fill="#FFFFFF"
+                          stroke="#FFFFFF"
+                          strokeWidth={Math.max(1.8, viewWidth / 90)}
+                          strokeLinejoin="round"
+                        >
+                          {destLabel}
+                        </SvgText>
+                        <SvgText
+                          x={endPixel.x}
+                          y={endPixel.y - destPinRadius - 2.5}
+                          textAnchor="middle"
+                          fontSize={destFontSize}
+                          fontWeight="800"
+                          fill="#172C43"
+                        >
+                          {destLabel}
+                        </SvgText>
+                      </G>
+                    ) : null}
                   </G>
                 )}
 
-                {/* 2f. Dấu rẽ ở ngã rẽ tiếp theo (Turn Badge) */}
+                {/* 2d. Dấu rẽ ở ngã rẽ tiếp theo (Turn Badge #075DC4) */}
                 {turnPixel && (
                   <G>
                     <Circle
@@ -955,14 +1209,14 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                       r={turnBadgeRadius}
                       fill="#075DC4"
                       stroke="#FFFFFF"
-                      strokeWidth={2}
+                      strokeWidth={Math.max(1.3, viewWidth / 110)}
                     />
                     <SvgText
                       x={turnPixel.x}
                       y={turnPixel.y + turnBadgeRadius * 0.38}
                       fill="#FFFFFF"
-                      fontSize={turnBadgeRadius * 1.3}
-                      fontWeight="bold"
+                      fontSize={turnBadgeRadius * 1.25}
+                      fontWeight="900"
                       textAnchor="middle"
                     >
                       {guidanceSymbol(guidance?.direction)}
@@ -973,12 +1227,20 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })()}
 
-          {/* 3. Điểm dừng / Điểm đến (Endpoints) */}
+          {/* 3. Điểm dừng / Điểm đến (Endpoints: Chấm tròn xanh lá #157347 + Mũi tên hướng tam giác + Mã endpoint) */}
           {visibleEndpoints.map((endpoint) => {
             const point = geometry.toViewPixel({
               x: Number(endpoint.xM),
               y: Number(endpoint.yM),
             });
+            const lastPt =
+              validPlannedPath && validPlannedPath.length > 0
+                ? validPlannedPath[validPlannedPath.length - 1]
+                : null;
+            const isRouteDestination = Boolean(
+              lastPt &&
+                Math.hypot(Number(endpoint.xM) - lastPt.xM, Number(endpoint.yM) - lastPt.yM) <= 0.1
+            );
             const isSelected =
               selectedEndpointId === endpoint.endpointId ||
               selectedEndpointId === endpoint.endpointCode ||
@@ -987,10 +1249,21 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                   endpoint.endpointCode &&
                   selectedEndpointId.toUpperCase() === endpoint.endpointCode.toUpperCase()
               );
-            const r = isSelected ? Math.max(3.8, viewWidth / 68) : Math.max(2.4, viewWidth / 95);
-            const hitRadius = Math.max(12, viewWidth / 16);
-            const epLabel = (endpoint.endpointName || endpoint.endpointCode || '').trim();
-            const fontSize = Math.max(3.8, viewWidth / 48);
+
+            const r = Math.max(2.0, viewWidth / 66);
+            const hitRadius = Math.max(10, viewWidth / 16);
+            const angle = geometry.toViewHeadingRad(Number(endpoint.yawRad) || 0);
+            const tipX = point.x + Math.cos(angle) * (r * 2.25);
+            const tipY = point.y + Math.sin(angle) * (r * 2.25);
+            const leftX = point.x + Math.cos(angle + 2.45) * (r * 0.95);
+            const leftY = point.y + Math.sin(angle + 2.45) * (r * 0.95);
+            const rightX = point.x + Math.cos(angle - 2.45) * (r * 0.95);
+            const rightY = point.y + Math.sin(angle - 2.45) * (r * 0.95);
+            const conePoints = `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`;
+
+            const markerColor = isSelected && !isRouteDestination ? '#C75100' : '#157347';
+            const epLabel = (endpoint.endpointCode || endpoint.endpointName || '').trim();
+            const fontSize = Math.max(2.8, viewWidth / 62);
 
             return (
               <G
@@ -1004,225 +1277,132 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                   fill="rgba(0, 0, 0, 0.001)"
                   stroke="none"
                 />
-                <Circle
-                  cx={point.x}
-                  cy={point.y}
-                  r={isSelected ? r * 2.2 : r * 1.5}
-                  fill={isSelected ? 'rgba(37, 99, 235, 0.35)' : 'rgba(14, 165, 233, 0.16)'}
-                />
-                <Circle
-                  cx={point.x}
-                  cy={point.y}
-                  r={r}
-                  fill={isSelected ? '#2563EB' : '#0284C7'}
-                  stroke="#FFFFFF"
-                  strokeWidth={Math.max(0.7, viewWidth / 260)}
-                />
-                {/* Chỉ hiển thị nhãn của endpoint nếu chưa có Presentation Room hoặc khi endpoint được chọn để giao diện thoáng, tinh tế */}
-                {(presentationRooms.length === 0 || isSelected) && (
+                {/* Nếu endpoint đang là đích đến của đường dẫn đỏ thì nhường chấm đỏ hiển thị rõ như ảnh mẫu */}
+                {!isRouteDestination && (
                   <G pointerEvents="none">
-                    <SvgText
-                      x={point.x}
-                      y={point.y - r - 2}
-                      textAnchor="middle"
-                      fontSize={fontSize}
-                      fontWeight="800"
-                      fill="#FFFFFF"
+                    <Circle
+                      cx={point.x}
+                      cy={point.y}
+                      r={r}
+                      fill={markerColor}
                       stroke="#FFFFFF"
-                      strokeWidth={Math.max(2, viewWidth / 85)}
+                      strokeWidth={Math.max(0.85, viewWidth / 170)}
+                    />
+                    <Polygon
+                      points={conePoints}
+                      fill={markerColor}
+                      stroke="#FFFFFF"
+                      strokeWidth={Math.max(0.75, viewWidth / 190)}
                       strokeLinejoin="round"
-                    >
-                      {epLabel}
-                    </SvgText>
-                    <SvgText
-                      x={point.x}
-                      y={point.y - r - 2}
-                      textAnchor="middle"
-                      fontSize={fontSize}
-                      fontWeight="800"
-                      fill={isSelected ? '#1D4ED8' : '#0F172A'}
-                    >
-                      {epLabel}
-                    </SvgText>
+                    />
+                    {epLabel ? (
+                      <G>
+                        <SvgText
+                          x={point.x}
+                          y={point.y + r * 2.3 + fontSize}
+                          textAnchor="middle"
+                          fontSize={fontSize}
+                          fontWeight="700"
+                          fill="#FFFFFF"
+                          stroke="#FFFFFF"
+                          strokeWidth={Math.max(1.6, viewWidth / 100)}
+                          strokeLinejoin="round"
+                        >
+                          {epLabel}
+                        </SvgText>
+                        <SvgText
+                          x={point.x}
+                          y={point.y + r * 2.3 + fontSize}
+                          textAnchor="middle"
+                          fontSize={fontSize}
+                          fontWeight="700"
+                          fill="#1F2430"
+                        >
+                          {epLabel}
+                        </SvgText>
+                      </G>
+                    ) : null}
                   </G>
                 )}
               </G>
             );
           })}
 
-          {/* 4. Thân xe AMR (OTTO Chassis + Heading Direction) */}
+          {/* 4. Vị trí và Hướng của Robot (Chấm tròn xanh dương #0879EE + Mũi tên tam giác hướng đi chuẩn map-navigation.js) */}
           {validRobotPose && (() => {
             const robotPt = geometry.toViewPixel({
               x: validRobotPose.xM,
               y: validRobotPose.yM,
             });
-            const headingDeg =
-              (geometry.toViewHeadingRad(validRobotPose.yawRad) * 180) / Math.PI;
-            const chassisLen = Math.max(9.5, viewWidth / 22);
-            const chassisWid = chassisLen * 0.72;
-            const safetyLen = chassisLen * 1.36;
-            const safetyWid = chassisWid * 1.38;
-
-            const safetyStroke = isPoseLive ? '#0EA5E9' : '#64748B';
-            const safetyFill = isPoseLive
-              ? 'rgba(14, 165, 233, 0.22)'
-              : 'rgba(100, 116, 139, 0.18)';
-            const frontLedColor = isPoseLive ? '#10B981' : '#94A3B8';
+            const angle = geometry.toViewHeadingRad(validRobotPose.yawRad);
+            const r = Math.max(3.8, (viewWidth / 58) * 1.65);
+            const tipX = robotPt.x + Math.cos(angle) * (r * 2.25);
+            const tipY = robotPt.y + Math.sin(angle) * (r * 2.25);
+            const leftX = robotPt.x + Math.cos(angle + 2.45) * (r * 0.95);
+            const leftY = robotPt.y + Math.sin(angle + 2.45) * (r * 0.95);
+            const rightX = robotPt.x + Math.cos(angle - 2.45) * (r * 0.95);
+            const rightY = robotPt.y + Math.sin(angle - 2.45) * (r * 0.95);
+            const conePoints = `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`;
 
             return (
-              <G
-                transform={`translate(${robotPt.x}, ${robotPt.y}) rotate(${headingDeg})`}
-              >
-                <Rect
-                  x={-safetyLen / 2}
-                  y={-safetyWid / 2}
-                  width={safetyLen}
-                  height={safetyWid}
-                  rx={safetyWid * 0.26}
-                  fill={safetyFill}
-                  stroke={safetyStroke}
-                  strokeWidth={Math.max(0.9, viewWidth / 210)}
+              <G pointerEvents="none">
+                <Circle
+                  cx={robotPt.x}
+                  cy={robotPt.y}
+                  r={r}
+                  fill="#0879EE"
+                  stroke="#FFFFFF"
+                  strokeWidth={Math.max(1.2, viewWidth / 125)}
                 />
-                <Rect
-                  x={-chassisLen / 2}
-                  y={-chassisWid / 2}
-                  width={chassisLen}
-                  height={chassisWid}
-                  rx={chassisWid * 0.2}
-                  fill="#FFFFFF"
-                  stroke="#0F172A"
-                  strokeWidth={Math.max(0.7, viewWidth / 260)}
-                />
-                <Rect
-                  x={chassisLen * 0.18}
-                  y={-chassisWid * 0.32}
-                  width={chassisLen * 0.22}
-                  height={chassisWid * 0.64}
-                  rx={chassisWid * 0.12}
-                  fill={frontLedColor}
-                />
-                <Rect
-                  x={-chassisLen * 0.44}
-                  y={-chassisWid * 0.34}
-                  width={chassisLen * 0.1}
-                  height={chassisWid * 0.2}
-                  rx={0.6}
-                  fill="#EF4444"
-                />
-                <Rect
-                  x={-chassisLen * 0.44}
-                  y={chassisWid * 0.14}
-                  width={chassisLen * 0.1}
-                  height={chassisWid * 0.2}
-                  rx={0.6}
-                  fill="#EF4444"
+                <Polygon
+                  points={conePoints}
+                  fill="#0879EE"
+                  stroke="#FFFFFF"
+                  strokeWidth={Math.max(1.05, viewWidth / 140)}
+                  strokeLinejoin="round"
                 />
               </G>
             );
           })()}
         </Svg>
 
-        {/* Banner chỉ dẫn điều hướng Nav2 (Còn 43 cm, rẽ phải) */}
-        {guidance && guidance.state !== 'IDLE' && (
-          <NavigationGuidanceBanner
-            guidance={guidance}
-            onStop={onStopEscort}
-            isStopping={isStoppingEscort}
-          />
-        )}
-
-        {/* HUD 1: Hệ trục tọa độ và vị trí mét */}
-        <View style={styles.ottoAxisHud} pointerEvents="none">
-          <Svg width={24} height={24} viewBox="0 0 28 28">
-            <Line x1="14" y1="23" x2="14" y2="5" stroke="#94A3B8" strokeWidth="1.2" />
-            <Polygon points="14,3 11.8,7 16.2,7" fill="#E2E8F0" />
-            <Line x1="5" y1="14" x2="23" y2="14" stroke="#94A3B8" strokeWidth="1.2" />
-            <Polygon points="25,14 21,11.8 21,16.2" fill="#E2E8F0" />
-            <Circle cx="14" cy="14" r="1.8" fill="#38BDF8" />
-          </Svg>
-          <View style={styles.ottoAxisTextCol}>
-            <Text style={styles.ottoAxisCoordText}>
-              x: {validRobotPose ? `${validRobotPose.xM.toFixed(2)} m` : '-- m'}
-            </Text>
-            <Text style={styles.ottoAxisCoordText}>
-              y: {validRobotPose ? `${validRobotPose.yM.toFixed(2)} m` : '-- m'}
-            </Text>
-          </View>
-        </View>
-
-        {/* HUD 2: Tên map và phiên bản Live */}
-        <View style={styles.ottoLivePillWrap} pointerEvents="none">
-          <View style={styles.ottoLivePill}>
-            <View style={styles.ottoLiveLockIcon}>
-              <Ionicons name="lock-closed" size={9} color="#052E16" />
-            </View>
-            <Text style={styles.ottoLivePillText} numberOfLines={1}>
-              Live {'>'} v{map.versionNo || 1}: {map.mapName || 'final o truong'}
-            </Text>
-          </View>
-        </View>
-
-        {/* HUD 3: Nút chuyển Filter CAD / Dark / Raw */}
-        <TouchableOpacity
-          style={styles.ottoFilterBtn}
-          onPress={cycleFilterMode}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="layers-outline" size={12} color="#38BDF8" />
-          <Text style={styles.ottoFilterBtnText}>
-            {filterMode === 'otto_cad'
-              ? 'OTTO CAD'
-              : filterMode === 'otto_dark'
-              ? 'OTTO DARK'
-              : 'RAW MAP'}
-          </Text>
-        </TouchableOpacity>
-
-        {isLoadingImage && !naturalSize && !autoAlign && !imageFailed && (
+        {!hasPresentation && isLoadingImage && !naturalSize && !autoAlign && !imageFailed && (
           <View style={styles.loadingOverlay} pointerEvents="none">
             <ActivityIndicator size="small" color="#2563EB" />
-            <Text style={styles.loadingText}>Đang tải & căn chỉnh viền map...</Text>
+            <Text style={styles.loadingText}>Đang tải & căn chỉnh bản đồ SLAM...</Text>
           </View>
         )}
 
-        {imageFailed && (
+        {!hasPresentation && imageFailed && (
           <View style={styles.warningBadge} pointerEvents="none">
             <Text style={styles.warningText}>
-              Đang hiển thị chế độ CAD từ dữ liệu tọa độ SLAM
+              Đang hiển thị bản đồ từ dữ liệu tọa độ SLAM
             </Text>
           </View>
         )}
+            </View>
+          )}
+        </View>
       </View>
 
-      {/* Thanh chú thích Traffic Control */}
+      {/* Thanh chú thích chuẩn giao diện bản đồ chỉ đường */}
       <View style={styles.legendBar}>
         <View style={styles.legendRow}>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#0284C7' }]} />
-            <Text style={styles.legendLabel}>Speed Limit Zone</Text>
+            <View style={[styles.legendDot, { backgroundColor: '#0879EE' }]} />
+            <Text style={styles.legendLabel}>Robot đang dẫn đường</Text>
           </View>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#EF4444' }]} />
-            <Text style={styles.legendLabel}>Exclusion Zone</Text>
+            <View style={[styles.legendDot, { backgroundColor: '#157347' }]} />
+            <Text style={styles.legendLabel}>Endpoint đã lưu</Text>
           </View>
           <View style={styles.legendItem}>
-            <View
-              style={[
-                styles.legendDot,
-                {
-                  backgroundColor: validRobotPose
-                    ? isPoseLive
-                      ? '#10B981'
-                      : '#64748B'
-                    : '#94A3B8',
-                },
-              ]}
-            />
-            <Text style={styles.legendLabel}>
-              {validRobotPose
-                ? `AMR (${validRobotPose.xM.toFixed(2)}m, ${validRobotPose.yM.toFixed(2)}m · ${Math.round((validRobotPose.yawRad * 180) / Math.PI)}°)`
-                : 'AMR: Chờ định vị AMCL'}
-            </Text>
+            <View style={[styles.legendDot, { backgroundColor: '#D94B3D' }]} />
+            <Text style={styles.legendLabel}>Điểm đến</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: '#1877ED' }]} />
+            <Text style={styles.legendLabel}>Đường Nav2 dự kiến</Text>
           </View>
         </View>
       </View>
@@ -1232,17 +1412,32 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
 
 const styles = StyleSheet.create({
   outerWrapper: {
+    flex: 1,
     width: '100%',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#F8FAFC',
     borderRadius: 12,
     overflow: 'hidden',
   },
-  canvasContainer: {
+  canvasViewport: {
+    flex: 1,
+    minHeight: 0,
     width: '100%',
     position: 'relative',
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#1E293B',
+  },
+  canvasCenterLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  canvasContainer: {
+    position: 'relative',
+    overflow: 'hidden',
   },
   rotatedMapImage: {
     position: 'absolute',
@@ -1378,8 +1573,8 @@ const styles = StyleSheet.create({
   },
   legendBar: {
     backgroundColor: '#FFFFFF',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderTopWidth: 1,
     borderTopColor: '#E4E4E7',
   },
@@ -1388,21 +1583,21 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 8,
+    gap: 6,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   legendLabel: {
     color: '#606068',
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '600',
   },
 });

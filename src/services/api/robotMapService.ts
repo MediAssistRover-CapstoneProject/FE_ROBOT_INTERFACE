@@ -5,7 +5,9 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
-import { DEFAULT_ROBOT_CODE } from './config';
+import { NavigationGuidanceResult } from '../../features/navigation/navigationGuidance';
+import { DEFAULT_ROBOT_CODE, generateUuid } from './config';
+import { robotApiService } from './robotApiService';
 import defaultPresentationData from './defaultPresentationMap.json';
 
 export interface PresentationPoint {
@@ -22,6 +24,7 @@ export interface PresentationFeature {
   lineWidthM?: number;
   fontSizeM?: number;
   endpointId?: string | null;
+  endpointName?: string | null;
   roomId?: string | null;
   roomCode?: string | null;
   roomName?: string | null;
@@ -31,209 +34,238 @@ export interface PresentationFeature {
   roomPublicVisible?: boolean | null;
 }
 
+export interface PresentationSource {
+  mapId?: string;
+  assetHash?: string;
+  widthM?: number;
+  heightM?: number;
+  resolutionMPerPixel?: number;
+  originXM?: number;
+  originYM?: number;
+  originYawRad?: number;
+  frameId?: string;
+  widthPx?: number;
+  heightPx?: number;
+}
+
 export interface PresentationDocument {
   schemaVersion?: number;
   backgroundColor?: string;
   rotationDegrees?: number;
   features: PresentationFeature[];
+  source?: PresentationSource | null;
 }
 
-export const DEFAULT_PRESENTATION_DOC: PresentationDocument = (
+export interface PresentationPublishedResponse {
+  source?: PresentationSource | null;
+  revision?: number;
+  document?: PresentationDocument | null;
+  publishedAt?: string;
+}
+
+const rawDefaultPresentation =
   (defaultPresentationData as any).published ||
   (defaultPresentationData as any).draft ||
-  defaultPresentationData
-) as PresentationDocument;
+  defaultPresentationData;
+
+export const DEFAULT_PRESENTATION_DOC: PresentationDocument = {
+  ...(rawDefaultPresentation as PresentationDocument),
+  source: (defaultPresentationData as any).source ?? null,
+};
 
 export const REMOTE_API_BASE = 'https://mediassistrover.duckdns.org/api/v1';
 
-// Cấu hình chuẩn của map 'final o truong' đang chạy trên hệ thống bệnh viện
+// Cấu hình chuẩn của map bệnh viện ('map mới nhất' - bdf6503a-d38e-4bde-9a67-763e91668593)
 export const DEFAULT_HOSPITAL_MAP: MapResponse = {
-  mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-  floorId: 'c214abc7-c887-11f1-904a-f63b6c16c38d',
-  mapCode: 'MAP_c91abd2e7ba64992a843d5bcb5e40540',
+  mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+  floorId: '9584bf02-e008-11f1-8dbe-06ffc22cc223',
+  mapCode: 'MAP_4e42fdd9259247879813b0e0ae05091a',
   versionNo: 1,
-  mapName: 'final o truong',
-  widthM: 5.775,
-  heightM: 4.7,
+  mapName: 'map mới nhất',
+  widthM: 3.85,
+  heightM: 4.225,
   resolutionMPerPixel: 0.025,
-  originXM: -3.4252,
-  originYM: -1.4668,
+  originXM: -0.513023376450729,
+  originYM: -0.6450063744738561,
   originYawRad: 0,
 };
 
 export const DEFAULT_MAP_METADATA = {
-  width_px: 231,
-  height_px: 188,
-  resolution_m_per_pixel: 0.025,
-  width_m: 5.775,
-  height_m: 4.7,
-  origin_x_m: -3.4252,
-  origin_y_m: -1.4668,
+  width_px: 154,
+  height_px: 169,
+  resolution_m_per_pixel: 0.02500000037252903,
+  width_m: 3.8500000573694706,
+  height_m: 4.225000062957406,
+  origin_x_m: -0.513023376450729,
+  origin_y_m: -0.6450063744738561,
   origin_yaw_rad: 0,
   frame_id: 'map',
-  map_id: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
+  map_id: 'bdf6503a-d38e-4bde-9a67-763e91668593',
   image_url:
-    'https://mediassistrover-media-2026-179897609252.s3.ap-southeast-1.amazonaws.com/images/maps/e571fe71-d3ea-4aa5-a673-ffd857ac9f09.png',
+    'https://mediassistrover-media-2026-179897609252.s3.ap-southeast-1.amazonaws.com/images/maps/bdf6503a-d38e-4bde-9a67-763e91668593.png',
 };
 
-// 2 Vùng phân khu giao thông thực tế trên map: Vùng giảm tốc (SPEED) và Vùng cấm (KEEP_OUT)
+// 2 Vùng phân khu giao thông thực tế trên map bệnh viện: Vùng giảm tốc (SPEED) và Vùng cấm (KEEP_OUT)
 export const DEFAULT_HOSPITAL_ZONES: ZoneDto[] = [
   {
-    zoneId: '48cbf96f-d876-4889-abab-135f7a405884',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    zoneCode: 'giam toc',
-    zoneName: 'giam toc',
+    zoneId: '51b5a5d3-44e0-4283-b4d7-6723edd4f47e',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    zoneCode: 'ZONE_001',
+    zoneName: 'giảm tốc',
     zoneType: 'SPEED',
-    speedLimitMps: 0.15,
+    speedLimitMps: 0.1,
     active: true,
     polygonJson: {
       points: [
-        [0.262258, 1.695686],
-        [-0.037742, 1.270686],
-        [0.862258, 0.620686],
-        [1.337258, 1.395686],
+        [0.349477, 0.542494],
+        [0.299477, -0.007506],
+        [1.499477, -0.082506],
+        [1.499477, 0.292494],
+        [0.824477, 0.467494],
+        [0.824477, 0.867494],
+        [0.299477, 1.017494],
       ],
     },
   },
   {
-    zoneId: '6fbcfe97-6b89-40c1-979a-3ac8da98f41a',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    zoneCode: 'ZONE_001',
+    zoneId: '0d9a837b-9f49-4a56-a4f6-d28fcadf3820',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    zoneCode: 'ZONE_002',
     zoneName: 'cấm',
     zoneType: 'KEEP_OUT',
     active: true,
     polygonJson: {
       points: [
-        [0.912258, -0.554314],
-        [1.387258, -0.754314],
-        [1.212258, -1.154314],
-        [0.787258, -0.979314],
+        [2.649477, 3.267494],
+        [2.674477, 2.667494],
+        [3.174477, 2.692494],
+        [3.224477, 3.142494],
       ],
     },
   },
 ];
 
-// 11 Điểm đến (Endpoints) thực tế đã hiệu chuẩn (calibrated) chuẩn xác trên map 'final o truong'
+// 11 Điểm đến (Endpoints) thực tế đã hiệu chuẩn trên map bệnh viện ('map mới nhất')
 export const DEFAULT_HOSPITAL_ENDPOINTS: EndpointResponse[] = [
   {
-    endpointId: '049204b7-cd5c-41b8-af99-1cd2797d796c',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '01',
-    endpointName: 'phòng 1',
+    endpointId: 'cb9cf2d2-e7aa-4c17-9f02-8de24503cdc6',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'Letan',
+    endpointName: 'lễ tân',
     endpointType: 'WAYPOINT',
-    xM: 0.0373,
-    yM: -0.3043,
-    yawRad: -2.03837,
+    xM: 0.6245,
+    yM: 3.1425,
+    yawRad: 2.982299,
     active: true,
   },
   {
-    endpointId: '9601325c-037f-443f-89c4-5e43ee69878f',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '02',
-    endpointName: 'phòng 2',
+    endpointId: 'de5a11cc-6c26-41b7-b21b-ce5eca33ee9a',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'phong01',
+    endpointName: 'Phòng 01',
     endpointType: 'WAYPOINT',
-    xM: -1.0377,
-    yM: -0.0043,
-    yawRad: -2.094395,
+    xM: 0.5745,
+    yM: 2.2425,
+    yawRad: 3.01691,
     active: true,
   },
   {
-    endpointId: '755370df-de88-48ba-9c94-65163f75adf0',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '03',
-    endpointName: 'phòng 3',
+    endpointId: '045a65ee-6658-45c6-89d8-6d26dd230679',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'phong02',
+    endpointName: 'Phòng 02',
     endpointType: 'WAYPOINT',
-    xM: -2.2877,
-    yM: 0.4457,
-    yawRad: -2.059489,
+    xM: 0.4495,
+    yM: 1.1925,
+    yawRad: 3.045026,
     active: true,
   },
   {
-    endpointId: '61768589-0667-4072-b2ea-3007605c2c35',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '04',
-    endpointName: 'phòng 4',
+    endpointId: '390ca660-06a4-4945-b70f-d06d337ad0be',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'phong03',
+    endpointName: 'Phòng 03',
     endpointType: 'WAYPOINT',
-    xM: -1.5627,
-    yM: 2.3207,
-    yawRad: 1.448623,
+    xM: 0.4495,
+    yM: 0.7925,
+    yawRad: 3.141593,
     active: true,
   },
   {
-    endpointId: '17f3bde7-13fa-4d7b-b9e2-0775e9031bcd',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '05',
-    endpointName: 'phòng 5',
+    endpointId: '5c1fd2e2-7573-4054-bda7-464eb297d567',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'capcuu',
+    endpointName: 'Phòng cấp cứu',
     endpointType: 'WAYPOINT',
-    xM: -0.7377,
-    yM: 2.0457,
-    yawRad: 1.22173,
+    xM: 0.5245,
+    yM: 0.1925,
+    yawRad: -2.391101,
     active: true,
   },
   {
-    endpointId: '12923b22-c6c6-4ed7-9fbf-155d41a5987b',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: '06',
-    endpointName: 'phòng 6',
+    endpointId: '0b4ad195-a8c6-4f97-9be7-b00a073b789f',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'Nhikhoa',
+    endpointName: 'Phòng nhi khoa',
     endpointType: 'WAYPOINT',
-    xM: 0.9873,
-    yM: 1.4457,
-    yawRad: 1.37881,
+    xM: 1.2245,
+    yM: 1.7925,
+    yawRad: 1.385751,
     active: true,
   },
   {
-    endpointId: 'b99fdb64-30ca-45a4-b2ef-3ed8c3173254',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: 'kho',
-    endpointName: 'phòng kho',
+    endpointId: '99a00b7c-23fc-41ac-ad92-40a05e026ec7',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'quaythuoc',
+    endpointName: 'Quầy Thuốc',
     endpointType: 'WAYPOINT',
-    xM: -1.9877,
-    yM: 2.4207,
-    yawRad: 2.146755,
+    xM: 1.5745,
+    yM: 1.3175,
+    yawRad: -1.703421,
     active: true,
   },
   {
-    endpointId: '3f599409-70a9-4ca3-a0df-ca5bcf1bfcde',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: 'lt',
-    endpointName: 'Lễ tân',
+    endpointId: '75f1ea74-744f-45e1-bf16-cc1b9c95cb20',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'PHONGXETNGHIEM',
+    endpointName: 'phòng xét nghiệm',
     endpointType: 'WAYPOINT',
-    xM: 1.1623,
-    yM: 0.8957,
-    yawRad: 0,
+    xM: 2.2245,
+    yM: 1.3925,
+    yawRad: -0.05593,
     active: true,
   },
   {
-    endpointId: 'a5185658-b5db-4d60-85c0-38c65204fe7c',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: 'WC',
-    endpointName: 'Khu vệ sinh',
+    endpointId: '0921e125-37fa-4437-a6c3-51cf34eadcaf',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'PHONGCHANTHUONG',
+    endpointName: 'phòng chấn thương chỉnh hình',
     endpointType: 'WAYPOINT',
-    xM: -2.8127,
-    yM: 0.9957,
-    yawRad: -2.443461,
+    xM: 2.1995,
+    yM: 0.3925,
+    yawRad: -0.221002,
     active: true,
   },
   {
-    endpointId: 'c8c111a3-d97f-4677-adc8-d8211c07ecb5',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: 'c',
-    endpointName: 'Sảnh C',
+    endpointId: '53890882-a955-4c76-8ff8-c58405b231ea',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'PHONG SOS',
+    endpointName: 'phòng sos',
     endpointType: 'WAYPOINT',
-    xM: -0.3127,
-    yM: 0.6957,
-    yawRad: -0.317999,
+    xM: 2.3495,
+    yM: 2.0925,
+    yawRad: -0.050969,
     active: true,
   },
   {
-    endpointId: '05516d49-8850-481f-aec2-4b9c471afad1',
-    mapId: 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09',
-    endpointCode: 'h',
-    endpointName: 'Hành lang H',
+    endpointId: '7aad633d-a0b9-4d08-80e7-9a8a5a4a1c79',
+    mapId: 'bdf6503a-d38e-4bde-9a67-763e91668593',
+    endpointCode: 'Vesinh',
+    endpointName: 'nhà vệ sinh',
     endpointType: 'WAYPOINT',
-    xM: -0.7377,
-    yM: 1.2207,
-    yawRad: 2.645221,
+    xM: 2.1745,
+    yM: -0.3325,
+    yawRad: 0.05236,
     active: true,
   },
 ];
@@ -279,7 +311,7 @@ class RobotMapService {
   /**
    * Tải toàn bộ cấu hình Map, Zones, Endpoints từ Backend
    */
-  public async loadMapPackage() {
+  public async loadMapPackage(preferredMapId?: string) {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -287,23 +319,99 @@ class RobotMapService {
     let metadata: Record<string, any> = DEFAULT_MAP_METADATA;
     let zones: ZoneDto[] = DEFAULT_HOSPITAL_ZONES;
     let endpoints: EndpointResponse[] = DEFAULT_HOSPITAL_ENDPOINTS;
-    let presentation: PresentationDocument = DEFAULT_PRESENTATION_DOC;
+    let presentation: PresentationDocument | null = null;
+    let availableMaps: MapResponse[] = [DEFAULT_HOSPITAL_MAP];
 
-    // 1. Lấy danh sách map từ backend
+    // 1. Lấy song song danh sách maps, endpoints, zones và snapshot hiện tại từ backend
+    let mapsList: MapResponse[] = [];
+    let allEndpoints: EndpointResponse[] = [];
+    let allZones: ZoneDto[] = [];
+    let liveSessionMapId: string | null = null;
+
     try {
-      const mapsRes = await fetch(`${REMOTE_API_BASE}/maps`, { headers });
-      if (mapsRes.ok) {
+      const [mapsRes, epRes, zonesRes, snapRes] = await Promise.all([
+        fetch(`${REMOTE_API_BASE}/maps?page=0&size=50`, { headers }).catch(() => null),
+        fetch(`${REMOTE_API_BASE}/endpoints?page=0&size=100`, { headers }).catch(() => null),
+        fetch(`${REMOTE_API_BASE}/zones?page=0&size=100`, { headers }).catch(() => null),
+        fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, { headers }).catch(
+          () => null
+        ),
+      ]);
+
+      if (mapsRes?.ok) {
         const mapsData = await mapsRes.json();
-        const list = mapsData?.content;
-        if (Array.isArray(list) && list.length > 0) {
-          const match =
-            list.find((m: any) => m.mapName?.toLowerCase().includes('truong')) || list[0];
-          activeMap = match;
+        if (Array.isArray(mapsData?.content)) {
+          mapsList = mapsData.content;
+        }
+      }
+
+      if (epRes?.ok) {
+        const epData = await epRes.json();
+        if (Array.isArray(epData?.content)) {
+          allEndpoints = epData.content.filter(
+            (e: any) =>
+              e.active !== false &&
+              Number.isFinite(Number(e.xM)) &&
+              Number.isFinite(Number(e.yM))
+          );
+        }
+      }
+
+      if (zonesRes?.ok) {
+        const zonesData = await zonesRes.json();
+        if (Array.isArray(zonesData?.content)) {
+          allZones = zonesData.content;
+        }
+      }
+
+      if (snapRes?.ok) {
+        const snapData = await snapRes.json();
+        const sess = snapData?.navigationSession;
+        const planMapId = snapData?.navigationPlan?.mapId;
+        if (planMapId) {
+          liveSessionMapId = planMapId;
+        } else if (
+          sess?.mapId &&
+          ['WAITING_FOR_PI', 'LOCALIZING', 'READY'].includes(sess.state)
+        ) {
+          liveSessionMapId = sess.mapId;
         }
       }
     } catch {}
 
-    // 2. Lấy metadata của ảnh map
+    // 2. Chọn map tối ưu nhất từ danh sách maps của BE
+    if (mapsList.length > 0) {
+      availableMaps = mapsList;
+      const endpointCountByMap = new Map<string, number>();
+      allEndpoints.forEach((ep) => {
+        if (ep.mapId) {
+          endpointCountByMap.set(ep.mapId, (endpointCountByMap.get(ep.mapId) || 0) + 1);
+        }
+      });
+
+      const byPreferred = preferredMapId
+        ? mapsList.find((m) => m.mapId === preferredMapId)
+        : null;
+      const byLiveSession =
+        liveSessionMapId && (endpointCountByMap.get(liveSessionMapId) || 0) > 0
+          ? mapsList.find((m) => m.mapId === liveSessionMapId)
+          : null;
+
+      // Ưu tiên map có nhiều endpoints đã cấu hình nhất (vd: 'map mới nhất' bdf6503a với 11 endpoints bệnh viện)
+      const sortedByEndpoints = [...mapsList].sort(
+        (a, b) =>
+          (endpointCountByMap.get(b.mapId) || 0) - (endpointCountByMap.get(a.mapId) || 0)
+      );
+
+      activeMap =
+        byPreferred ||
+        byLiveSession ||
+        sortedByEndpoints[0] ||
+        mapsList[0] ||
+        DEFAULT_HOSPITAL_MAP;
+    }
+
+    // 3. Lấy metadata của ảnh map đã chọn
     try {
       const metaRes = await fetch(`${REMOTE_API_BASE}/maps/${activeMap.mapId}/image-metadata`, {
         headers,
@@ -316,71 +424,70 @@ class RobotMapService {
       }
     } catch {}
 
-    // 3. Lấy phân khu zones
+    // 4. Lọc phân khu zones thuộc map đã chọn
+    if (allZones.length > 0) {
+      zones = allZones.filter((z: any) => z.mapId === activeMap.mapId && z.active !== false);
+    }
+
+    // 5. Lọc danh sách endpoints thuộc map đã chọn (giữ nguyên tên và mã endpoint từ API)
+    if (allEndpoints.length > 0) {
+      const filtered = allEndpoints.filter((e: any) => e.mapId === activeMap.mapId);
+      if (filtered.length > 0) {
+        endpoints = filtered.map((ep: any) => ({
+          ...ep,
+          endpointName: (ep.endpointName || ep.endpointCode || '').trim(),
+          endpointCode: (ep.endpointCode || ep.endpointName || '').trim(),
+        }));
+      }
+    }
+
+    // 6. Lấy Presentation Map ưu tiên endpoint /presentation/published (đồng bộ với UI app)
+    const extractPresentation = (raw: any): PresentationDocument | null => {
+      if (!raw || typeof raw !== 'object') return null;
+      const doc =
+        raw?.document ||
+        raw?.published ||
+        raw?.draft ||
+        (Array.isArray(raw?.features) ? raw : null);
+      if (doc && Array.isArray(doc.features) && doc.features.length > 0) {
+        return {
+          ...doc,
+          source: raw?.source ?? doc?.source ?? null,
+        };
+      }
+      return null;
+    };
+
     try {
-      const zonesRes = await fetch(`${REMOTE_API_BASE}/zones`, { headers });
-      if (zonesRes.ok) {
-        const zonesData = await zonesRes.json();
-        const list = zonesData?.content;
-        if (Array.isArray(list) && list.length > 0) {
-          const filtered = list.filter((z: any) => z.mapId === activeMap.mapId);
-          if (filtered.length > 0) zones = filtered;
+      const publishedRes = await fetch(
+        `${REMOTE_API_BASE}/maps/${activeMap.mapId}/presentation/published`,
+        { headers }
+      );
+      if (publishedRes.ok) {
+        presentation = extractPresentation(await publishedRes.json());
+      } else {
+        const presRes = await fetch(
+          `${REMOTE_API_BASE}/maps/${activeMap.mapId}/presentation`,
+          { headers }
+        );
+        if (presRes.ok) {
+          presentation = extractPresentation(await presRes.json());
         }
       }
     } catch {}
 
-    // 4. Lấy danh sách endpoints (lấy toàn bộ size=100)
-    try {
-      const epRes = await fetch(`${REMOTE_API_BASE}/endpoints?page=0&size=100`, { headers });
-      if (epRes.ok) {
-        const epData = await epRes.json();
-        const list = epData?.content;
-        if (Array.isArray(list) && list.length > 0) {
-          const filtered = list.filter(
-            (e: any) =>
-              e.mapId === activeMap.mapId &&
-              e.active !== false &&
-              Number.isFinite(Number(e.xM)) &&
-              Number.isFinite(Number(e.yM))
-          );
-          if (filtered.length > 0) {
-            // Chuẩn hóa tên tiếng Việt rõ ràng cho các phòng
-            endpoints = filtered.map((ep: any) => {
-              let name = (ep.endpointName || ep.endpointCode || '').trim();
-              if (ep.endpointCode === 'c') name = 'Sảnh C';
-              else if (ep.endpointCode === 'h') name = 'Hành lang H';
-              else if (ep.endpointCode === 'WC') name = 'Khu vệ sinh';
-              else if (ep.endpointCode === 'kho') name = 'Phòng kho';
-              else if (ep.endpointCode === '01') name = 'Phòng 1';
-              else if (ep.endpointCode === '02') name = 'Phòng 2';
-              else if (ep.endpointCode === '03') name = 'Phòng 3';
-              else if (ep.endpointCode === '04') name = 'Phòng 4';
-              else if (ep.endpointCode === '05') name = 'Phòng 5';
-              else if (ep.endpointCode === '06') name = 'Phòng 6';
-              else if (ep.endpointCode === 'lt') name = 'Lễ tân';
-              return { ...ep, endpointName: name };
-            });
-          }
-        }
-      }
-    } catch {}
-
-    // 5. Lấy Presentation Map (Sơ đồ CAD phòng và tường trực quan đồng bộ Web Admin)
-    try {
-      const presRes = await fetch(`${REMOTE_API_BASE}/maps/${activeMap.mapId}/presentation`, {
-        headers,
-      });
-      if (presRes.ok) {
-        const presData = await presRes.json();
-        const doc = presData?.published || presData?.draft;
-        if (doc && Array.isArray(doc.features) && doc.features.length > 0) {
-          presentation = doc;
-        }
-      }
-    } catch {}
+    const defaultPresentationMapId = (defaultPresentationData as any)?.source?.mapId;
+    if (
+      !presentation &&
+      defaultPresentationMapId &&
+      activeMap.mapId === defaultPresentationMapId
+    ) {
+      presentation = DEFAULT_PRESENTATION_DOC;
+    }
 
     return {
       activeMap,
+      availableMaps,
       metadata,
       zones,
       endpoints,
@@ -390,7 +497,7 @@ class RobotMapService {
   }
 
   /**
-   * Tải snapshot & vị trí thời gian thực của Robot (Nav2 Telemetry + Quỹ đạo di chuyển)
+   * Tải snapshot, vị trí thời gian thực và chỉ dẫn điều hướng (navigation-guidance) của Robot
    */
   public async loadRobotSnapshot(): Promise<{
     pose: MapRobotPose | null;
@@ -399,11 +506,20 @@ class RobotMapService {
     batteryRaw: number;
     mqttConnected: boolean;
     navigationPlan: MapPlanPoint[] | null;
+    planEndpointId?: string | null;
+    planEndpointName?: string | null;
+    backendGuidance?: NavigationGuidanceResult | null;
+    sessionMapId?: string | null;
+    sessionId?: string | null;
+    sessionState?: string | null;
+    activeJobId?: string | null;
+    dispatchReady?: boolean;
+    snapshotReachable?: boolean;
   }> {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-    // 1. Nhận diện ID robot theo cấu hình cụ thể thay vì chọn ngẫu nhiên
+    // 1. Nhận diện ID robot theo cấu hình
     const configuredRobotId = (process.env.EXPO_PUBLIC_ROBOT_ID || '').trim();
     if (configuredRobotId) {
       cachedActiveRobotId = configuredRobotId;
@@ -426,13 +542,19 @@ class RobotMapService {
       } catch {}
     }
 
-    // 2. Lấy Snapshot trực tiếp của Robot (Tọa độ Nav2 + Đường đi Planned Path)
+    // 2. Lấy đồng thời Snapshot và Navigation Guidance từ Backend (đồng bộ với map-navigation.js)
     try {
-      const res = await fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, {
-        headers,
-      });
-      if (res.ok) {
-        const snapshot = await res.json();
+      const [snapRes, guidRes] = await Promise.all([
+        fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, { headers }),
+        fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/navigation-guidance`, {
+          headers,
+        }).catch(() => null),
+      ]);
+
+      if (snapRes.ok) {
+        const snapshot = await snapRes.json();
+        const guidData = guidRes?.ok ? await guidRes.json().catch(() => null) : null;
+
         const p = snapshot?.latestPose;
         const pose: MapRobotPose | null =
           p && Number.isFinite(Number(p.xM)) && Number.isFinite(Number(p.yM))
@@ -445,9 +567,10 @@ class RobotMapService {
               }
             : null;
 
-        // Trích xuất toàn bộ toạ độ điểm đường đi từ kế hoạch điều hướng Nav2 (navigationPlan)
+        // Trích xuất quỹ đạo từ navigation-guidance.plan hoặc snapshot.navigationPlan
+        const rawPlan = guidData?.plan || snapshot?.navigationPlan;
         let navigationPlan: MapPlanPoint[] | null = null;
-        const rawPoints = snapshot?.navigationPlan?.points;
+        const rawPoints = rawPlan?.points;
         if (Array.isArray(rawPoints) && rawPoints.length >= 2) {
           navigationPlan = rawPoints
             .map((pt: any) => ({
@@ -455,6 +578,46 @@ class RobotMapService {
               yM: Number(pt?.yM ?? pt?.y_m ?? pt?.y),
             }))
             .filter((pt) => Number.isFinite(pt.xM) && Number.isFinite(pt.yM));
+        }
+
+        // Chuyển đổi kết quả từ /navigation-guidance của BE sang NavigationGuidanceResult
+        let backendGuidance: NavigationGuidanceResult | null = null;
+        if (
+          guidData &&
+          ['TRACKING', 'WAITING_FOR_POSE', 'ARRIVED'].includes(guidData.state) &&
+          navigationPlan &&
+          navigationPlan.length >= 2
+        ) {
+          const epName = rawPlan?.endpointName || 'Điểm đến';
+          const remCm =
+            typeof guidData.remainingCm === 'number' ? Math.round(guidData.remainingCm) : undefined;
+          backendGuidance = {
+            state: guidData.state,
+            direction: guidData.direction,
+            distanceCm:
+              typeof guidData.distanceCm === 'number' ? Math.round(guidData.distanceCm) : remCm,
+            remainingCm: remCm,
+            turn:
+              guidData.turn &&
+              Number.isFinite(Number(guidData.turn.xM)) &&
+              Number.isFinite(Number(guidData.turn.yM))
+                ? { xM: Number(guidData.turn.xM), yM: Number(guidData.turn.yM) }
+                : undefined,
+            projection:
+              guidData.projection &&
+              Number.isFinite(Number(guidData.projection.xM)) &&
+              Number.isFinite(Number(guidData.projection.yM))
+                ? { xM: Number(guidData.projection.xM), yM: Number(guidData.projection.yM) }
+                : undefined,
+            segmentIndex:
+              typeof guidData.segmentIndex === 'number' ? guidData.segmentIndex : undefined,
+            primaryText: guidData.text || 'Đang chờ vị trí robot',
+            secondaryText:
+              guidData.state === 'TRACKING' && typeof remCm === 'number'
+                ? `${epName} · Còn ${remCm} cm`
+                : epName,
+            observedAt: guidData.observedAt,
+          };
         }
 
         return {
@@ -467,6 +630,15 @@ class RobotMapService {
           mqttConnected: Boolean(snapshot?.mqttConnected),
           navigationPlan:
             navigationPlan && navigationPlan.length >= 2 ? navigationPlan : null,
+          planEndpointId: rawPlan?.endpointId || null,
+          planEndpointName: rawPlan?.endpointName || null,
+          backendGuidance,
+          sessionMapId: snapshot?.navigationSession?.mapId || null,
+          sessionId: snapshot?.navigationSession?.sessionId || null,
+          sessionState: snapshot?.navigationSession?.state || null,
+          activeJobId: snapshot?.activeJobId || null,
+          dispatchReady: Boolean(snapshot?.dispatchReady),
+          snapshotReachable: true,
         };
       }
     } catch {}
@@ -479,7 +651,67 @@ class RobotMapService {
       batteryRaw: 7850,
       mqttConnected: false,
       navigationPlan: null,
+      backendGuidance: null,
+      activeJobId: null,
+      dispatchReady: false,
+      snapshotReachable: false,
     };
+  }
+
+  /**
+   * Tạo job dẫn đường trong workflow NAVIGATION đã publish sẵn (không tạo workflow mới),
+   * chỉ gửi khi robot ở trạng thái IDLE và không có job nào đang chạy.
+   */
+  public async dispatchMoveWorkflow(
+    endpointId: string,
+    mapId: string,
+    sessionId?: string | null
+  ): Promise<{ ok: boolean; serviceRequestId?: string; workflowId?: string; reason?: string }> {
+    const snapshot = await this.loadRobotSnapshot();
+    if (snapshot.snapshotReachable && snapshot.status !== 'IDLE') {
+      return {
+        ok: false,
+        reason: `Robot đang ở trạng thái ${snapshot.status}, cần IDLE để nhận lệnh mới.`,
+      };
+    }
+    if (snapshot.activeJobId) {
+      return {
+        ok: false,
+        reason: 'Robot đang có job hoạt động, không thể gửi thêm lệnh đè.',
+      };
+    }
+
+    try {
+      const workflowId = await robotApiService.resolveNavigationWorkflowId('NAVIGATION');
+      const useSessionId =
+        sessionId && snapshot.sessionState === 'READY' && snapshot.sessionMapId === mapId
+          ? sessionId
+          : undefined;
+      const res = await robotApiService.requestNavigation(
+        {
+          mapId,
+          workflowId,
+          destinationEndpointId: endpointId,
+          targetMode: 'ENDPOINT',
+          navigationMode: 'STANDARD',
+          passengerCount: 1,
+          priority: 80,
+          navigationSessionId: useSessionId,
+          note: 'Bệnh nhân chọn điểm đến trên bản đồ robot',
+        },
+        generateUuid(),
+      );
+      return {
+        ok: true,
+        serviceRequestId: res?.request?.serviceRequestId,
+        workflowId: res?.workflowId || workflowId,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: err instanceof Error ? err.message : 'Không thể tạo yêu cầu dẫn đường.',
+      };
+    }
   }
 }
 

@@ -27,6 +27,8 @@ export interface SlamAutoAlignResult {
   yMax: number;
   boxWidth: number;
   boxHeight: number;
+  /** Khoảng cách BFS (theo ô pixel) tới tường/vật cản gần nhất để lập lộ trình A* */
+  wallDist?: Int16Array;
 }
 
 // Bảng mã Huffman cố định theo chuẩn RFC-1951 (DEFLATE)
@@ -569,6 +571,46 @@ export function analyzeSlamMapGeometry(
   yMin -= padY;
   yMax += padY;
 
+  // Bước 5: Tính trường khoảng cách tới tường/vật cản (BFS Distance Transform) cho A*
+  const totalCells = width * height;
+  const wallDist = new Int16Array(totalCells);
+  wallDist.fill(999);
+  const bfsQueue = new Int32Array(totalCells);
+  let qHead = 0;
+  let qTail = 0;
+
+  for (let i = 0; i < totalCells; i++) {
+    // Tường đen (< 140) hoặc vùng chưa quét ngoài sàn (< 218) coi là biên cản
+    if (gray[i] < 218) {
+      wallDist[i] = 0;
+      bfsQueue[qTail++] = i;
+    }
+  }
+
+  while (qHead < qTail) {
+    const cur = bfsQueue[qHead++];
+    const ux = cur % width;
+    const uy = (cur / width) | 0;
+    const nextDist = wallDist[cur] + 1;
+
+    if (ux > 0 && wallDist[cur - 1] > nextDist) {
+      wallDist[cur - 1] = nextDist;
+      bfsQueue[qTail++] = cur - 1;
+    }
+    if (ux + 1 < width && wallDist[cur + 1] > nextDist) {
+      wallDist[cur + 1] = nextDist;
+      bfsQueue[qTail++] = cur + 1;
+    }
+    if (uy > 0 && wallDist[cur - width] > nextDist) {
+      wallDist[cur - width] = nextDist;
+      bfsQueue[qTail++] = cur - width;
+    }
+    if (uy + 1 < height && wallDist[cur + width] > nextDist) {
+      wallDist[cur + width] = nextDist;
+      bfsQueue[qTail++] = cur + width;
+    }
+  }
+
   return {
     width,
     height,
@@ -580,5 +622,274 @@ export function analyzeSlamMapGeometry(
     yMax,
     boxWidth: xMax - xMin,
     boxHeight: yMax - yMin,
+    wallDist,
   };
+}
+
+export interface GridMetricMeta {
+  widthPx: number;
+  heightPx: number;
+  resolution: number;
+  originX: number;
+  originY: number;
+  originYaw: number;
+}
+
+/**
+ * Tìm lộ trình dẫn đường trên lưới SLAM Occupancy Grid (A* + Line-of-Sight String Pulling)
+ * đi dọc giữa hành lang, tránh tường đen giống hệt bộ lập kế hoạch Nav2 của BE/Pi.
+ */
+export function planPathOnSlamGrid(
+  align: SlamAutoAlignResult | null | undefined,
+  meta: GridMetricMeta,
+  start: { xM: number; yM: number },
+  goal: { xM: number; yM: number }
+): { xM: number; yM: number }[] | null {
+  if (!align || !align.wallDist || align.width <= 0 || align.height <= 0) {
+    return null;
+  }
+
+  const width = align.width;
+  const height = align.height;
+  const wallDist = align.wallDist;
+  const cosO = Math.cos(meta.originYaw || 0);
+  const sinO = Math.sin(meta.originYaw || 0);
+  const res = Math.max(0.001, meta.resolution || 0.025);
+
+  const mapToPixel = (xM: number, yM: number) => {
+    const dx = xM - meta.originX;
+    const dy = yM - meta.originY;
+    const u = Math.round((cosO * dx + sinO * dy) / res);
+    const v = Math.round(height - (-sinO * dx + cosO * dy) / res);
+    return {
+      u: Math.max(0, Math.min(width - 1, u)),
+      v: Math.max(0, Math.min(height - 1, v)),
+    };
+  };
+
+  const pixelToMap = (u: number, v: number) => {
+    const x = (u + 0.5) * res;
+    const y = (height - (v + 0.5)) * res;
+    return {
+      xM: Number((meta.originX + cosO * x - sinO * y).toFixed(4)),
+      yM: Number((meta.originY + sinO * x + cosO * y).toFixed(4)),
+    };
+  };
+
+  // Nếu điểm đầu/cuối sát tường, kéo nhẹ ra ô sàn trống gần nhất
+  const snapToFreeCell = (u0: number, v0: number, minClearance = 2) => {
+    const idx0 = v0 * width + u0;
+    if (wallDist[idx0] >= minClearance) return { u: u0, v: v0 };
+    let bestU = u0;
+    let bestV = v0;
+    let bestD = wallDist[idx0];
+    for (let r = 1; r <= 14; r++) {
+      for (let dv = -r; dv <= r; dv++) {
+        for (let du = -r; du <= r; du++) {
+          const nu = u0 + du;
+          const nv = v0 + dv;
+          if (nu < 0 || nu >= width || nv < 0 || nv >= height) continue;
+          const wd = wallDist[nv * width + nu];
+          if (wd >= minClearance) {
+            return { u: nu, v: nv };
+          }
+          if (wd > bestD) {
+            bestD = wd;
+            bestU = nu;
+            bestV = nv;
+          }
+        }
+      }
+    }
+    return { u: bestU, v: bestV };
+  };
+
+  const rawS = mapToPixel(start.xM, start.yM);
+  const rawG = mapToPixel(goal.xM, goal.yM);
+  const s = snapToFreeCell(rawS.u, rawS.v, 2);
+  const g = snapToFreeCell(rawG.u, rawG.v, 2);
+
+  const startIdx = s.v * width + s.u;
+  const goalIdx = g.v * width + g.u;
+  if (startIdx === goalIdx) {
+    return [
+      { xM: start.xM, yM: start.yM },
+      { xM: goal.xM, yM: goal.yM },
+    ];
+  }
+
+  const total = width * height;
+  const gScore = new Float32Array(total);
+  gScore.fill(1e9);
+  const parent = new Int32Array(total);
+  parent.fill(-1);
+  const closed = new Uint8Array(total);
+
+  gScore[startIdx] = 0;
+  const open: number[] = [startIdx];
+
+  const d8: [number, number, number][] = [
+    [-1, 0, 1],
+    [1, 0, 1],
+    [0, -1, 1],
+    [0, 1, 1],
+    [-1, -1, 1.4142],
+    [1, -1, 1.4142],
+    [-1, 1, 1.4142],
+    [1, 1, 1.4142],
+  ];
+
+  let found = false;
+  while (open.length > 0) {
+    let bestI = 0;
+    let bestF = 1e9;
+    for (let i = 0; i < open.length; i++) {
+      const idx = open[i];
+      const ux = idx % width;
+      const uy = (idx / width) | 0;
+      const f = gScore[idx] + Math.hypot(ux - g.u, uy - g.v);
+      if (f < bestF) {
+        bestF = f;
+        bestI = i;
+      }
+    }
+
+    const cur = open.splice(bestI, 1)[0];
+    if (cur === goalIdx) {
+      found = true;
+      break;
+    }
+    if (closed[cur]) continue;
+    closed[cur] = 1;
+
+    const ux = cur % width;
+    const uy = (cur / width) | 0;
+
+    for (let k = 0; k < 8; k++) {
+      const [dx, dy, stepCost] = d8[k];
+      const nx = ux + dx;
+      const ny = uy + dy;
+      if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+      const nIdx = ny * width + nx;
+      if (closed[nIdx]) continue;
+      const wd = wallDist[nIdx];
+      if (wd < 1) continue; // Không đi xuyên tường
+
+      // Phạt các ô quá sát tường để đường đi luôn bám chính giữa hành lang
+      const clearancePenalty =
+        wd === 1 ? 14 : wd < 7 ? (7 - wd) * 1.9 : 0;
+      const tentativeG = gScore[cur] + stepCost + clearancePenalty;
+      if (tentativeG < gScore[nIdx]) {
+        gScore[nIdx] = tentativeG;
+        parent[nIdx] = cur;
+        open.push(nIdx);
+      }
+    }
+  }
+
+  if (!found) {
+    return null;
+  }
+
+  const rawCells: { u: number; v: number }[] = [];
+  let trace = goalIdx;
+  while (trace !== -1) {
+    rawCells.push({ u: trace % width, v: (trace / width) | 0 });
+    trace = parent[trace];
+  }
+  rawCells.reverse();
+
+  if (rawCells.length < 2) {
+    return [
+      { xM: start.xM, yM: start.yM },
+      { xM: goal.xM, yM: goal.yM },
+    ];
+  }
+
+  // Kiểm tra tầm nhìn thẳng (Line-of-Sight) trên hành lang để làm mượt bậc thang pixel
+  const hasClearLineOfSight = (
+    a: { u: number; v: number },
+    b: { u: number; v: number },
+    minClearance = 3
+  ): boolean => {
+    const du = b.u - a.u;
+    const dv = b.v - a.v;
+    const steps = Math.max(Math.abs(du), Math.abs(dv)) * 2;
+    if (steps <= 1) return true;
+    for (let sIdx = 1; sIdx < steps; sIdx++) {
+      const t = sIdx / steps;
+      const cu = Math.round(a.u + du * t);
+      const cv = Math.round(a.v + dv * t);
+      if (cu < 0 || cu >= width || cv < 0 || cv >= height) return false;
+      if (wallDist[cv * width + cu] < minClearance) return false;
+    }
+    return true;
+  };
+
+  // String-pulling nhưng vẫn giữ các điểm neo cách nhau ~0.20m dọc hành lang để dẫn đường mượt
+  const smoothedCells: { u: number; v: number }[] = [rawCells[0]];
+  let anchor = 0;
+  while (anchor < rawCells.length - 1) {
+    let furthest = anchor + 1;
+    for (let probe = rawCells.length - 1; probe > anchor + 1; probe--) {
+      if (hasClearLineOfSight(rawCells[anchor], rawCells[probe], 3)) {
+        furthest = probe;
+        break;
+      }
+    }
+    const aCell = rawCells[anchor];
+    const bCell = rawCells[furthest];
+    const segDistPx = Math.hypot(bCell.u - aCell.u, bCell.v - aCell.v);
+    const subSteps = Math.max(1, Math.round(segDistPx / 8));
+    for (let sIdx = 1; sIdx <= subSteps; sIdx++) {
+      const t = sIdx / subSteps;
+      smoothedCells.push({
+        u: aCell.u + (bCell.u - aCell.u) * t,
+        v: aCell.v + (bCell.v - aCell.v) * t,
+      });
+    }
+    anchor = furthest;
+  }
+
+  const metricPoints = smoothedCells.map((c) => pixelToMap(c.u, c.v));
+  metricPoints[0] = { xM: Number(start.xM.toFixed(4)), yM: Number(start.yM.toFixed(4)) };
+  metricPoints[metricPoints.length - 1] = {
+    xM: Number(goal.xM.toFixed(4)),
+    yM: Number(goal.yM.toFixed(4)),
+  };
+
+  return metricPoints;
+}
+
+/**
+ * Lộ trình hành lang dự phòng khi ảnh PNG đang tải (chưa giải mã xong)
+ */
+export function planFallbackCorridorPath(
+  start: { xM: number; yM: number },
+  goal: { xM: number; yM: number }
+): { xM: number; yM: number }[] {
+  const dx = goal.xM - start.xM;
+  const dy = goal.yM - start.yM;
+  if (Math.hypot(dx, dy) < 0.05) {
+    return [
+      { xM: start.xM, yM: start.yM },
+      { xM: goal.xM, yM: goal.yM },
+    ];
+  }
+
+  // Nếu cùng trục hành lang (chênh lệch X < 0.25m hoặc Y < 0.25m) -> đi thẳng
+  if (Math.abs(dx) < 0.25 || Math.abs(dy) < 0.25) {
+    return [
+      { xM: start.xM, yM: start.yM },
+      { xM: goal.xM, yM: goal.yM },
+    ];
+  }
+
+  // Đi theo hành lang chữ L hoặc chữ Z qua lối thông giữa bản đồ (y ~ 1.75m hoặc y ~ 2.95m)
+  const corner = { xM: start.xM, yM: goal.yM };
+  return [
+    { xM: start.xM, yM: start.yM },
+    corner,
+    { xM: goal.xM, yM: goal.yM },
+  ];
 }

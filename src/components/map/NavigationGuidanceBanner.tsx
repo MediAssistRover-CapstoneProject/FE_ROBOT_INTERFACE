@@ -37,15 +37,14 @@ export function NavigationGuidanceBanner({
   const isWaitingPose = guidance.state === 'WAITING_FOR_POSE';
 
   return (
-    <View style={styles.container}>
-      {/* Icon rẽ nổi bật bên trái */}
-      <View
-        style={[
-          styles.iconBox,
-          isArrived && styles.iconBoxArrived,
-          isWaitingPose && styles.iconBoxWaiting,
-        ]}
-      >
+    <View
+      style={[
+        styles.container,
+        isArrived && styles.containerArrived,
+      ]}
+    >
+      {/* Icon rẽ nổi bật bên trái chuẩn map-navigation.css (#navGuidanceIcon) */}
+      <View style={styles.iconWrap}>
         {isWaitingPose ? (
           <ActivityIndicator size="small" color="#FFFFFF" />
         ) : (
@@ -53,7 +52,7 @@ export function NavigationGuidanceBanner({
         )}
       </View>
 
-      {/* Cột thông tin chỉ dẫn chính & phụ */}
+      {/* Cột thông tin chỉ dẫn chính & phụ chuẩn map-navigation.js */}
       <View style={styles.textColumn}>
         <AppText style={styles.primaryText} numberOfLines={1}>
           {guidance.primaryText}
@@ -62,11 +61,6 @@ export function NavigationGuidanceBanner({
           <AppText style={styles.secondaryText} numberOfLines={1}>
             {guidance.secondaryText}
           </AppText>
-          {isTracking && typeof guidance.etaSeconds === 'number' && guidance.etaSeconds > 0 && (
-            <AppText style={styles.etaText}>
-              · Khoảng {guidance.etaSeconds} giây nữa tới chỗ rẽ
-            </AppText>
-          )}
         </View>
       </View>
 
@@ -98,61 +92,47 @@ export function NavigationGuidanceBanner({
 
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    zIndex: 999,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#202022',
-    borderRadius: 18,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: '#2D2D31',
-    gap: 14,
+    backgroundColor: '#0757A6',
+    borderRadius: 10,
+    marginHorizontal: 8,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    shadowColor: '#102C49',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 4,
+    gap: 12,
   },
-  iconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+  containerArrived: {
+    backgroundColor: '#157347',
+  },
+  iconWrap: {
+    minWidth: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-  },
-  iconBoxArrived: {
-    backgroundColor: '#166534',
-    borderColor: '#24A148',
-  },
-  iconBoxWaiting: {
-    backgroundColor: 'rgba(217, 119, 6, 0.25)',
-    borderColor: '#D97706',
   },
   iconSymbol: {
     color: '#FFFFFF',
     fontSize: 26,
-    fontWeight: '900',
+    fontWeight: '700',
     lineHeight: 30,
     textAlign: 'center',
   },
   textColumn: {
     flex: 1,
     justifyContent: 'center',
-    gap: 3,
+    gap: 1,
   },
   primaryText: {
     color: '#FFFFFF',
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '800',
-    letterSpacing: -0.2,
+    lineHeight: 22,
   },
   secondaryRow: {
     flexDirection: 'row',
@@ -160,34 +140,30 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   secondaryText: {
-    color: '#D0D0D5',
-    fontSize: 13,
+    color: '#DEEDFF',
+    fontSize: 12.5,
     fontWeight: '500',
-  },
-  etaText: {
-    color: '#A0A0A8',
-    fontSize: 12,
-    fontWeight: '500',
-    marginLeft: 6,
+    lineHeight: 16,
   },
   stopButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#C62828',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    minHeight: 44,
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
   },
   stopButtonPressed: {
-    backgroundColor: '#991B1B',
+    backgroundColor: 'rgba(255, 255, 255, 0.28)',
     opacity: 0.9,
     transform: [{ scale: 0.97 }],
   },
   stopButtonText: {
     color: '#FFFFFF',
-    fontSize: 13,
+    fontSize: 12.5,
     fontWeight: '700',
   },
 });

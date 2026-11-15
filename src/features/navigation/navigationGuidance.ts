@@ -203,6 +203,7 @@ export interface GuidanceInput {
   minTurnAngleDeg?: number;
   simplifyToleranceM?: number;
   arrivalDistanceCm?: number;
+  preferCm?: boolean;
 }
 
 /**
@@ -217,7 +218,9 @@ export function computeGuidance(input: GuidanceInput): NavigationGuidanceResult 
     minTurnAngleDeg = 15,
     simplifyToleranceM = 0.15,
     arrivalDistanceCm = 15,
+    preferCm = false,
   } = input;
+  const preferMetersAbove1m = !preferCm;
 
   if (!planPoints || planPoints.length < 2) {
     return {
@@ -265,7 +268,7 @@ export function computeGuidance(input: GuidanceInput): NavigationGuidanceResult 
     return {
       state: 'WAITING_FOR_POSE',
       primaryText: 'Đang chờ vị trí robot',
-      secondaryText: `${destinationName} · Quãng đường: ${formatDistance(totalLength * 100)}`,
+      secondaryText: `${destinationName} · Quãng đường: ${formatDistance(totalLength * 100, preferMetersAbove1m)}`,
     };
   }
 
@@ -337,8 +340,8 @@ export function computeGuidance(input: GuidanceInput): NavigationGuidanceResult 
       etaSeconds = Math.max(1, Math.round(distanceToTurnM / speedMps));
     }
 
-    const distTurnStr = formatDistance(distanceCm);
-    const distRemStr = formatDistance(remainingCm);
+    const distTurnStr = formatDistance(distanceCm, preferMetersAbove1m);
+    const distRemStr = formatDistance(remainingCm, preferMetersAbove1m);
 
     return {
       state: 'TRACKING',
@@ -355,7 +358,7 @@ export function computeGuidance(input: GuidanceInput): NavigationGuidanceResult 
   }
 
   // Không còn ngã rẽ nào phía trước -> Đi thẳng tới đích
-  const distRemStr = formatDistance(remainingCm);
+  const distRemStr = formatDistance(remainingCm, preferMetersAbove1m);
   let etaSeconds: number | null = null;
   if (typeof speedMps === 'number' && speedMps >= 0.05) {
     etaSeconds = Math.max(1, Math.round(remainingDistanceM / speedMps));
