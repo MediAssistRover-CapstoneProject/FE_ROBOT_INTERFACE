@@ -2,10 +2,8 @@ import { useMemo, useState } from 'react';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { AppText, Button, Card, LoadingState, Notice, Screen, StatusChip } from '../../components/ui';
-import { QrScannerModal } from '../../components/QrScannerModal';
 import { colors, radii, spacing, typography } from '../../theme';
 import { robotApiService } from '../../services/api';
-import { generateUuid } from '../../services/api/config';
 import { DeliveryConnectionForm } from './DeliveryConnectionForm';
 import { DeliveryConnection, createDeliveryReader } from './deliveryReader';
 import { DeliveryQrCode } from './DeliveryQrCode';
@@ -111,34 +109,32 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
   const summary = stage ? stages[stage] : null;
   const waitingQr = stage === 'authSender' || stage === 'authReceiver';
 
-  // Camera scanner state
-  const [scannerOpen, setScannerOpen] = useState(false);
+  const isSenderLeg = stage === 'authSender' || stage === 'toSender' || stage === 'waitingSender' || stage === 'unlockingSender' || stage === 'loading' || stage === 'securingSender';
+  const isReceiverLeg = stage === 'authReceiver' || stage === 'transporting' || stage === 'unlockingReceiver' || stage === 'pickup' || stage === 'securingReceiver';
 
-  const jobId = mission?.jobId ?? (connection.mode === 'device' ? connection.jobId : null);
-  const authStepId = challenge?.authJobStepId ?? mission?.step?.jobStepId ?? null;
-  const scanPhase = stage === 'authSender' ? 'Người gửi · Điểm A' : 'Người nhận · Điểm B';
+  // Điều kiện kiểm tra khoang cần đóng/khóa hoặc phục hồi (D2)
+  const needsCompartmentSecuring =
+    stage === 'recovery' ||
+    stage === 'securingSender' ||
+    stage === 'securingReceiver' ||
+    stage === 'loading' ||
+    stage === 'pickup' ||
+    stage === 'unlockingSender' ||
+    stage === 'unlockingReceiver' ||
+    ((stage === 'cancelled' || stage === 'cancelling' || stage === 'failed') && Boolean(mission?.pickedUpAt || mission?.step));
 
-  /** Robot quét mã QR Staff → gửi proof lên server */
-  const handleCameraScan = async (rawPayload: string) => {
-    if (!jobId || !authStepId) {
-      throw new Error('Chưa có thông tin Job hoặc bước xác thực đang hoạt động.');
-    }
-    if (!rawPayload.startsWith(STAFF_QR_PREFIX)) {
-      throw new Error('Mã QR không hợp lệ. Yêu cầu nhân viên mở app và hiện mã QR giao nhận.');
-    }
-    await robotApiService.verifyStaffPhoneQr(jobId, {
-      authJobStepId: authStepId,
-      transportSessionId: generateUuid(),
-      proof: rawPayload,
-    });
-  };
+  const legTitle = isSenderLeg
+    ? 'CHẶNG GỬI (ĐIỂM A)'
+    : isReceiverLeg
+    ? 'CHẶNG NHẬN (ĐIỂM B)'
+    : 'NHIỆM VỤ GIAO HÀNG';
 
   return (
     <Screen>
       <View style={styles.content}>
         <View style={styles.screenHeader}>
           <View>
-            <AppText variant="caption" style={styles.eyebrow}>MEDIASSIST ROVER</AppText>
+            <AppText variant="caption" style={styles.eyebrow}>MEDIASSIST ROVER · {legTitle}</AppText>
             <AppText variant="title" accessibilityRole="header">Nhiệm vụ Vận chuyển</AppText>
           </View>
           <StatusChip
@@ -167,6 +163,50 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
           </Card>
         )}
 
+        {/* Hướng dẫn đóng và kiểm tra khóa khi khoang cần phục hồi hoặc chưa khóa an toàn (D2) */}
+        {needsCompartmentSecuring && (
+          <Card style={styles.recoveryCard}>
+            <View style={styles.recoveryHeader}>
+              <View style={styles.recoveryIconWrap}>
+                <Ionicons name="lock-closed" size={24} color="#B45309" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <AppText variant="label" style={styles.recoveryTitle}>
+                  Robot đang dừng an toàn · Cần đóng và kiểm tra khóa
+                </AppText>
+                <AppText variant="caption" style={styles.recoverySubtitle}>
+                  {stage === 'recovery'
+                    ? 'Hệ thống yêu cầu kiểm tra khoang vật lý và xác nhận phục hồi an toàn.'
+                    : stage === 'cancelled' || stage === 'cancelling'
+                    ? 'Nhiệm vụ đã dừng/hủy. Vui lòng kiểm tra và khóa nắp khoang trước khi chuyển trạng thái.'
+                    : 'Khoang đang mở hoặc đang chờ đóng nắp. Vui lòng thực hiện các bước kiểm tra dưới đây.'}
+                </AppText>
+              </View>
+            </View>
+
+            <View style={styles.recoverySteps}>
+              <View style={styles.recoveryStepItem}>
+                <Ionicons name="checkmark-circle-outline" size={16} color={colors.textSecondary} />
+                <AppText style={styles.recoveryStepText}>
+                  1. <AppText style={{ fontWeight: '700' }}>Đóng nắp khoang:</AppText> Nhấn nắp khoang đóng chặt vào khớp hoàn toàn, đảm bảo tay và đồ vật đã rời khỏi cơ cấu.
+                </AppText>
+              </View>
+              <View style={styles.recoveryStepItem}>
+                <Ionicons name="checkmark-circle-outline" size={16} color={colors.textSecondary} />
+                <AppText style={styles.recoveryStepText}>
+                  2. <AppText style={{ fontWeight: '700' }}>Kiểm tra khóa cơ học:</AppText> Dùng tay kéo nhẹ nắp để kiểm tra chốt khóa vật lý đã ngậm chặt, không bị kênh hở.
+                </AppText>
+              </View>
+              <View style={styles.recoveryStepItem}>
+                <Ionicons name="checkmark-circle-outline" size={16} color={colors.textSecondary} />
+                <AppText style={styles.recoveryStepText}>
+                  3. <AppText style={{ fontWeight: '700' }}>Xác nhận phục hồi:</AppText> Nhân viên y tế xác nhận khóa nắp trên ứng dụng Staff (hoặc xử lý cơ học tại chỗ nếu mất mạng) trước khi cho phép robot tiếp tục chuyển động.
+                </AppText>
+              </View>
+            </View>
+          </Card>
+        )}
+
         {mission && summary && (
           <View style={[styles.mainLayout, isLandscape && styles.mainLayoutLandscape]}>
             {/* Cột trái: Trạng thái & thông tin giao nhận */}
@@ -191,17 +231,39 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                   {summary.instruction}
                 </AppText>
 
-                {/* Quét camera khi chờ QR */}
+                {/* Hướng dẫn xác thực QR hai chiều cho đúng chặng gửi / nhận (D1) */}
                 {waitingQr && (
-                  <View style={styles.scanActions}>
-                    <Button
-                      title={stage === 'authSender' ? '📷 Robot quét QR người gửi' : '📷 Robot quét QR người nhận'}
-                      icon="camera"
-                      onPress={() => setScannerOpen(true)}
-                    />
-                    <AppText variant="caption" style={styles.centerMuted}>
-                      Nhân viên y tế mở app Staff → hiện mã QR → Robot quét bằng camera
-                    </AppText>
+                  <View style={styles.qrGuidanceBlock}>
+                    <View style={styles.qrGuidanceRow}>
+                      <Ionicons name="phone-portrait-outline" size={20} color={colors.hero} />
+                      <View style={{ flex: 1 }}>
+                        <AppText style={styles.guidanceHeading}>
+                          Chiều 1: Staff dùng điện thoại quét mã trên Robot
+                        </AppText>
+                        <AppText style={styles.guidanceDetail}>
+                          Nhân viên {stage === 'authSender' ? 'GỬI HÀNG (Điểm A)' : 'NHẬN HÀNG (Điểm B)'} mở app Staff, dùng camera điện thoại quét mã QR hiển thị ở khung bên phải màn hình này.
+                        </AppText>
+                      </View>
+                    </View>
+
+                    <View style={styles.qrGuidanceRow}>
+                      <Ionicons name="camera-outline" size={20} color={colors.hero} />
+                      <View style={{ flex: 1 }}>
+                        <AppText style={styles.guidanceHeading}>
+                          Chiều 2: Robot quét mã QR trên app của Staff
+                        </AppText>
+                        <AppText style={styles.guidanceDetail}>
+                          Hoặc: Nhân viên mở mã QR {stage === 'authSender' ? 'Người gửi' : 'Người nhận'} trong app Staff, đưa lại gần camera trên thân xe Robot. Hệ thống camera và module quét mã của Robot (Raspberry Pi chạy ROS / staff_qr.py) sẽ tự động nhận diện và gửi xác thực qua phiên MQTT thật.
+                        </AppText>
+                      </View>
+                    </View>
+
+                    <View style={styles.piHardwareBadge}>
+                      <Ionicons name="hardware-chip-outline" size={14} color={colors.textSecondary} />
+                      <AppText variant="caption" style={styles.piHardwareBadgeText}>
+                        Camera quét QR của Robot do Raspberry Pi xử lý trực tiếp với phiên vận chuyển MQTT thật. Màn hình tablet không tự sinh transportSessionId giả lập.
+                      </AppText>
+                    </View>
                   </View>
                 )}
               </Card>
@@ -232,7 +294,11 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
               {challenge ? (
                 <View style={styles.qrInner}>
                   <StatusChip
-                    label="STAFF QUÉT MÃ NÀY TRÊN ROBOT"
+                    label={
+                      challenge.purpose === 'DELIVERY_SENDER'
+                        ? 'MÃ QR NGƯỜI GỬI (ĐIỂM A) · STAFF QUÉT'
+                        : 'MÃ QR NGƯỜI NHẬN (ĐIỂM B) · STAFF QUÉT'
+                    }
                     tone="hero"
                     size="sm"
                   />
@@ -240,11 +306,14 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                     <DeliveryQrCode payload={challenge.qrPayload} size={qrSize} />
                   </View>
                   <AppText variant="caption" style={styles.centerMuted}>
-                    Staff có thể dùng camera điện thoại quét mã QR hiển thị ở trên.
+                    Staff {challenge.purpose === 'DELIVERY_SENDER' ? 'gửi hàng' : 'nhận hàng'} mở ứng dụng Staff trên điện thoại và quét mã QR hiển thị ở trên.
+                  </AppText>
+                  <AppText variant="caption" style={{ color: colors.textMuted, fontSize: 11 }}>
+                    Hết hạn: {new Date(challenge.expiresAt).toLocaleTimeString()}
                   </AppText>
                 </View>
               ) : waitingQr && !challenge && mission.step?.resolvedInputsJson?.method === 'QR_CODE' ? (
-                <Notice message="Chưa có mã QR hợp lệ. Đang cập nhật từ hệ thống." />
+                <Notice message="Chưa có mã QR hợp lệ cho chặng này. Đang chờ hệ thống cập nhật." />
               ) : (
                 <View style={styles.waitingPlaceholder}>
                   <Ionicons name="time-outline" size={44} color={colors.textSecondary} />
@@ -252,7 +321,7 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                     {stage === 'transporting' ? 'Đang trên đường di chuyển' : 'Đang xử lý nhiệm vụ'}
                   </AppText>
                   <AppText variant="caption" style={styles.centerMuted}>
-                    Mã xác thực QR sẽ hiển thị tự động khi robot đến điểm dừng.
+                    Mã xác thực QR sẽ hiển thị tự động khi robot đến đúng điểm dừng.
                   </AppText>
                 </View>
               )}
@@ -267,16 +336,6 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
           onPress={onEdit}
         />
       </View>
-
-      {/* Camera QR Scanner Modal */}
-      {scannerOpen && (
-        <QrScannerModal
-          title={stage === 'authSender' ? 'Quét QR nhân viên gửi' : 'Quét QR nhân viên nhận'}
-          subtitle={jobId ? `Job ${jobId.slice(0, 8).toUpperCase()} · ${scanPhase}` : scanPhase}
-          onScan={handleCameraScan}
-          onClose={() => setScannerOpen(false)}
-        />
-      )}
     </Screen>
   );
 }
@@ -392,5 +451,90 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 40,
     gap: spacing.sm,
+  },
+  recoveryCard: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#F59E0B',
+    borderWidth: 1.5,
+    padding: spacing.lg,
+    gap: spacing.md,
+  },
+  recoveryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  recoveryIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.md,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryTitle: {
+    color: '#92400E',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  recoverySubtitle: {
+    color: '#B45309',
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  recoverySteps: {
+    gap: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: '#FDE68A',
+  },
+  recoveryStepItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+  },
+  recoveryStepText: {
+    flex: 1,
+    color: '#78350F',
+    fontSize: 12.5,
+    lineHeight: 19,
+  },
+  qrGuidanceBlock: {
+    gap: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  qrGuidanceRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  guidanceHeading: {
+    fontWeight: '700',
+    color: colors.textPrimary,
+    fontSize: 13,
+  },
+  guidanceDetail: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  piHardwareBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surfaceMuted,
+    padding: spacing.xs + 2,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  piHardwareBadgeText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 11,
+    lineHeight: 15,
   },
 });
