@@ -12,14 +12,14 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../app/navigation';
 import { AppText, StatusChip } from '../../components/ui';
 import { AudioWaveform } from '../../components/AudioWaveform';
-import { robotApiService } from '../../services/api';
-import { DeviceIncidentStatusResponse } from '../../services/api/types';
+import { apiClient, robotApiService } from '../../services/api';
+import { DeviceIncidentStatusResponse, SosRoutingStatus } from '../../services/api/types';
 import { generateUuid } from '../../services/api/config';
 import { colors, radii, spacing, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Emergency'>;
 
-export type SosCallState =
+export type MedicalIncidentState =
   | 'INITIALIZING'
   | 'SENDING'
   | 'SENT_WAITING'
@@ -30,15 +30,25 @@ export type SosCallState =
   | 'FALSE_ALARM'
   | 'FAILED';
 
+export type MediaCallState =
+  | 'WAITING_STAFF'
+  | 'CONNECTING_MEDIA'
+  | 'CONNECTED'
+  | 'MEDIA_ERROR'
+  | 'ENDED';
+
 export function SosCallScreen({ route, navigation }: Props) {
   const insets = useSafeAreaInsets();
   const { mapId, xM, yM, roomCode, roomName } = route.params || {};
 
   const [callSeconds, setCallSeconds] = useState(0);
 
-  // 1. Quản lý vòng đời SOS thật với Backend
-  const [sosState, setSosState] = useState<SosCallState>('INITIALIZING');
+  // 1. Quản lý trạng thái Sự cố (Incident Lifecycle) và trạng thái Cuộc gọi (Media Lifecycle) riêng biệt
+  const [incidentState, setIncidentState] = useState<MedicalIncidentState>('INITIALIZING');
+  const [callState, setCallState] = useState<MediaCallState>('WAITING_STAFF');
   const [incidentId, setIncidentId] = useState<string | null>(null);
+  const [mediaSessionId, setMediaSessionId] = useState<string | null>(null);
+  const [sosRoutingStatus, setSosRoutingStatus] = useState<SosRoutingStatus | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState<boolean>(false);
 
@@ -69,12 +79,20 @@ export function SosCallScreen({ route, navigation }: Props) {
   const sendSosRequest = async () => {
     setIsRetrying(true);
     setErrorMessage(null);
-    setSosState('SENDING');
+    setIncidentState('SENDING');
+    setCallState('WAITING_STAFF');
     const start = Date.now();
 
     const desc = roomCode
       ? `Bệnh nhân gọi cấp cứu SOS tại sảnh (${roomCode})`
       : 'Bệnh nhân yêu cầu trợ giúp y tế khẩn cấp tại trạm Robot';
+
+    console.log('[SOS] Gửi POST /api/v1/pi/incidents/sos', {
+      baseUrl: apiClient.getBaseUrl(),
+      operationKey: operationKeyRef.current,
+      hasValidCoords,
+      mapId: hasValidCoords && mapId ? mapId : undefined,
+    });
 
     try {
       const res = await robotApiService.triggerSos(
@@ -94,17 +112,26 @@ export function SosCallScreen({ route, navigation }: Props) {
       }
 
       setIncidentId(assignedId);
-      setSosState('SENT_WAITING');
+      setSosRoutingStatus(res?.incident?.sosRoutingStatus ?? null);
+      setIncidentState('SENT_WAITING');
+      setCallState('WAITING_STAFF');
       setApiLogs({
         lastCall: 'POST /api/v1/pi/incidents/sos',
         lastResult: JSON.stringify(res),
         status: '200 OK',
         latencyMs: latency,
       });
+      console.log('[SOS] Thành công:', {
+        incidentId: assignedId,
+        sosRoutingStatus: res?.incident?.sosRoutingStatus ?? null,
+        latencyMs: latency,
+      });
     } catch (err: unknown) {
       const latency = Date.now() - start;
       const msg = err instanceof Error ? err.message : String(err);
-      setSosState('FAILED');
+      console.warn('[SOS] Gửi thất bại:', msg);
+      setIncidentState('FAILED');
+      setCallState('MEDIA_ERROR');
       setErrorMessage(msg);
       setApiLogs({
         lastCall: 'POST /api/v1/pi/incidents/sos',
@@ -132,21 +159,23 @@ export function SosCallScreen({ route, navigation }: Props) {
     return () => clearInterval(timer);
   }, []);
 
-  // 5. Polling kiểm tra trạng thái Incident thật từ GET /api/v1/pi/incidents/{incidentId}
+  // 5. Polling kiểm tra trạng thái Incident thật và kiểm tra trạng thái Media Session từ BE
   useEffect(() => {
     if (!incidentId) return;
     if (
-      sosState === 'RESOLVED' ||
-      sosState === 'CLOSED' ||
-      sosState === 'FALSE_ALARM'
+      incidentState === 'RESOLVED' ||
+      incidentState === 'CLOSED' ||
+      incidentState === 'FALSE_ALARM'
     ) {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      setCallState('ENDED');
       return;
     }
 
     pollIntervalRef.current = setInterval(async () => {
       const start = Date.now();
       try {
+        // a) Kiểm tra trạng thái sự cố y tế
         const statusRes: DeviceIncidentStatusResponse =
           await robotApiService.getIncidentStatus(incidentId);
 
@@ -159,23 +188,56 @@ export function SosCallScreen({ route, navigation }: Props) {
 
         const s = statusRes.status;
         if (s === 'OPEN' || s === 'REPORTED') {
-          setSosState('SENT_WAITING');
+          setIncidentState('SENT_WAITING');
         } else if (s === 'ACKNOWLEDGED') {
-          setSosState('ACKNOWLEDGED');
+          setIncidentState('ACKNOWLEDGED');
         } else if (s === 'IN_PROGRESS') {
-          setSosState('IN_PROGRESS');
+          setIncidentState('IN_PROGRESS');
         } else if (s === 'RESOLVED') {
-          setSosState('RESOLVED');
+          setIncidentState('RESOLVED');
+          setCallState('ENDED');
         } else if (s === 'CLOSED') {
-          setSosState('CLOSED');
+          setIncidentState('CLOSED');
+          setCallState('ENDED');
         } else if (s === 'FALSE_ALARM') {
-          setSosState('FALSE_ALARM');
+          setIncidentState('FALSE_ALARM');
+          setCallState('ENDED');
+        }
+
+        // b) Kiểm tra trạng thái cuộc gọi đàm thoại (Media Session trên Pi / LiveKit)
+        try {
+          const mediaRes = await robotApiService.getDeviceMediaSession();
+          if (mediaRes?.session) {
+            setMediaSessionId(mediaRes.session.sessionId);
+            const mState = mediaRes.session.state;
+            if (mState === 'ACTIVE') {
+              setCallState('CONNECTED');
+            } else if (mState === 'RINGING') {
+              setCallState('CONNECTING_MEDIA');
+            } else if (mState === 'ENDED') {
+              setCallState('ENDED');
+            }
+          } else {
+            // Chưa có phiên media session riêng
+            if (s === 'ACKNOWLEDGED' || s === 'IN_PROGRESS') {
+              // Nhân viên y tế đã ACK sự cố, đang chuẩn bị kết nối đàm thoại
+              setCallState((prev) => (prev === 'CONNECTED' ? 'CONNECTED' : 'CONNECTING_MEDIA'));
+            } else if (['RESOLVED', 'CLOSED', 'FALSE_ALARM'].includes(s)) {
+              setCallState('ENDED');
+            } else {
+              setCallState('WAITING_STAFF');
+            }
+          }
+        } catch {
+          // Media session check silent catch
         }
       } catch (err: unknown) {
+        const pollErrMsg = err instanceof Error ? err.message : String(err);
+        console.warn('[SOS] Polling lỗi:', pollErrMsg);
         setApiLogs((prev) => ({
           ...prev,
           lastCall: `GET /api/v1/pi/incidents/${incidentId.slice(0, 8)}...`,
-          lastResult: `Polling error: ${err instanceof Error ? err.message : String(err)}`,
+          lastResult: `Polling error: ${pollErrMsg}`,
           status: 'POLL_ERR',
         }));
       }
@@ -184,7 +246,7 @@ export function SosCallScreen({ route, navigation }: Props) {
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     };
-  }, [incidentId, sosState]);
+  }, [incidentId, incidentState]);
 
   // Thoát màn hình SOS - KHÔNG gửi heartbeat IDLE theo quy tắc an toàn
   const handleEndCall = () => {
@@ -198,9 +260,9 @@ export function SosCallScreen({ route, navigation }: Props) {
     return `${mins}:${secs}`;
   };
 
-  // Chi tiết hiển thị tương ứng trạng thái thực tế
-  const getDisplayDetails = () => {
-    switch (sosState) {
+  // Chi tiết hiển thị tương ứng trạng thái Sự cố y tế
+  const getIncidentDetails = () => {
+    switch (incidentState) {
       case 'INITIALIZING':
       case 'SENDING':
         return {
@@ -209,180 +271,363 @@ export function SosCallScreen({ route, navigation }: Props) {
           badgeText: 'Đang gửi tín hiệu...',
           badgeColor: colors.warningText,
           isWorking: true,
-          statusText: 'Đang phát tín hiệu SOS...',
         };
       case 'SENT_WAITING':
         return {
           title: 'Đã gửi SOS · Chờ nhân viên tiếp nhận',
           subtitle: 'Tín hiệu đã tới máy chủ. Đang chờ nhân viên trực bấm nhận.',
-          badgeText: 'Đã gửi SOS (Chờ tiếp nhận)',
+          badgeText: 'SỰ CỐ: Chờ tiếp nhận',
           badgeColor: colors.mapRoute,
           isWorking: true,
-          statusText: 'Đang chờ nhân viên y tế tiếp nhận máy...',
         };
       case 'ACKNOWLEDGED':
         return {
-          title: 'Nhân viên y tế đã tiếp nhận',
-          subtitle: 'Điều dưỡng trực đã nhận tín hiệu · Đang chuẩn bị hỗ trợ',
-          badgeText: 'Đã tiếp nhận (200 OK)',
+          title: 'Nhân viên y tế đã tiếp nhận sự cố',
+          subtitle: 'Điều dưỡng trực đã nhận tín hiệu (ACK) · Đang chuẩn bị hỗ trợ',
+          badgeText: 'SỰ CỐ: Đã tiếp nhận (ACK)',
           badgeColor: colors.successText,
           isWorking: false,
-          statusText: 'Nhân viên y tế đã tiếp nhận hỗ trợ',
         };
       case 'IN_PROGRESS':
         return {
           title: 'Đang xử lý sự cố tại hiện trường',
           subtitle: 'Đội cấp cứu đang xử lý sự cố cứu hộ tại vị trí robot',
-          badgeText: 'Đang xử lý',
+          badgeText: 'SỰ CỐ: Đang xử lý',
           badgeColor: colors.successText,
           isWorking: false,
-          statusText: 'Nhân viên đang trực tiếp xử lý',
         };
       case 'RESOLVED':
         return {
           title: 'Sự cố đã được xử lý hoàn tất',
           subtitle: 'Quy trình cứu hộ đã hoàn thành an toàn',
-          badgeText: 'Đã hoàn tất',
+          badgeText: 'SỰ CỐ: Đã hoàn tất',
           badgeColor: colors.successText,
           isWorking: false,
-          statusText: 'Đã xử lý xong',
         };
       case 'CLOSED':
         return {
           title: 'Hồ sơ sự cố đã đóng',
           subtitle: 'Sự cố SOS đã kết thúc',
-          badgeText: 'Đã đóng',
+          badgeText: 'SỰ CỐ: Đã đóng',
           badgeColor: colors.textMuted,
           isWorking: false,
-          statusText: 'Hồ sơ đã đóng',
         };
       case 'FALSE_ALARM':
         return {
           title: 'Báo động giả đã được hủy',
           subtitle: 'Nhân viên trực đã xác nhận sự cố báo động nhầm và đóng hồ sơ',
-          badgeText: 'Báo động giả',
+          badgeText: 'SỰ CỐ: Báo động giả',
           badgeColor: colors.textSecondary,
           isWorking: false,
-          statusText: 'Báo động giả đã hủy',
         };
       case 'FAILED':
         return {
           title: 'Gửi tín hiệu SOS thất bại',
           subtitle: errorMessage || 'Không thể kết nối đến máy chủ cấp cứu',
-          badgeText: 'Gửi lỗi (Thử lại)',
+          badgeText: 'SỰ CỐ: Gửi lỗi',
           badgeColor: colors.danger,
           isWorking: false,
-          statusText: 'Lỗi gửi tín hiệu cấp cứu',
         };
     }
   };
 
-  const display = getDisplayDetails();
+  // Chi tiết hiển thị tương ứng trạng thái Cuộc gọi đàm thoại LiveKit
+  const getCallDetails = () => {
+    switch (callState) {
+      case 'WAITING_STAFF':
+        return {
+          badgeText: 'CUỘC GỌI: Chờ nhân viên mở máy',
+          badgeColor: colors.textSecondary,
+          statusText: 'Đang chờ điều dưỡng trực mở kênh đàm thoại...',
+          showWave: false,
+        };
+      case 'CONNECTING_MEDIA':
+        return {
+          badgeText: 'CUỘC GỌI: Đang kết nối media...',
+          badgeColor: colors.warningText,
+          statusText: 'Đang thiết lập cầu nối LiveKit & âm thanh trên Robot (Pi)...',
+          showWave: true,
+        };
+      case 'CONNECTED':
+        return {
+          badgeText: 'CUỘC GỌI: Đang đàm thoại 2 chiều',
+          badgeColor: '#10B981',
+          statusText: 'Đàm thoại 2 chiều đang hoạt động (Mic & Loa trên Pi)',
+          showWave: true,
+        };
+      case 'MEDIA_ERROR':
+        return {
+          badgeText: 'CUỘC GỌI: Lỗi kết nối',
+          badgeColor: colors.danger,
+          statusText: 'Lỗi thiết lập đàm thoại âm thanh',
+          showWave: false,
+        };
+      case 'ENDED':
+        return {
+          badgeText: 'CUỘC GỌI: Đã kết thúc',
+          badgeColor: colors.textMuted,
+          statusText: 'Phiên đàm thoại hai chiều đã kết thúc',
+          showWave: false,
+        };
+    }
+  };
+
+  const getSosRoutingWarning = (routingStatus: SosRoutingStatus | null): string | null => {
+    switch (routingStatus) {
+      case 'NO_ACTIVE_SHIFT':
+        return 'Backend chưa thấy nhân viên trực SOS check-in trong ca (NO_ACTIVE_SHIFT). Hãy cho staff_sos check-in đúng phòng trực SOS.';
+      case 'NO_MONITORING_ROOM':
+        return 'Hệ thống chưa cấu hình phòng trực SOS (NO_MONITORING_ROOM / sos.monitoring-room-id).';
+      case 'ROOM_UNAVAILABLE':
+        return 'Phòng trực SOS đang tạm ngưng hoặc không khớp bệnh viện (ROOM_UNAVAILABLE).';
+      case 'AMBIGUOUS_SHIFT':
+        return 'Có nhiều hơn 1 nhân viên đang trực phòng SOS cùng lúc (AMBIGUOUS_SHIFT). Cần giữ đúng 1 người trong ca trực.';
+      default:
+        return null;
+    }
+  };
+
+  const incidentInfo = getIncidentDetails();
+  const callInfo = getCallDetails();
+  const routingWarning = getSosRoutingWarning(sosRoutingStatus);
   const isAcknowledged =
-    sosState === 'ACKNOWLEDGED' || sosState === 'IN_PROGRESS';
+    incidentState === 'ACKNOWLEDGED' || incidentState === 'IN_PROGRESS';
 
   return (
-    <View style={[styles.root, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 16 }]}>
-      {/* 1. Top Header Row */}
+    <View
+      style={[
+        styles.root,
+        {
+          paddingTop: Math.max(insets.top, 8),
+          paddingBottom: Math.max(insets.bottom, 10),
+        },
+      ]}
+    >
+      {/* 1. Top Header Row: Nút Quay lại + Trạng thái Sự cố & Cuộc gọi */}
       <View style={styles.topHeader}>
-        <View style={styles.sosBadge}>
-          <View style={styles.redDot} />
-          <AppText style={styles.sosBadgeText}>HỖ TRỢ KHẨN CẤP · ROBOT AMR</AppText>
+        <View style={styles.headerLeftGroup}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+            onPress={handleEndCall}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+            ]}
+          >
+            <Ionicons name="arrow-back" size={18} color="#FFFFFF" />
+            <AppText style={styles.backButtonText}>Quay lại</AppText>
+          </Pressable>
+
+          <View style={styles.sosBadge}>
+            <View style={styles.redDot} />
+            <AppText style={styles.sosBadgeText}>HỖ TRỢ KHẨN CẤP · ROBOT AMR</AppText>
+          </View>
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Xem chi tiết kết nối API"
-          onPress={() => setShowApiConsole(!showApiConsole)}
-          style={styles.apiStatusPill}
-        >
-          <View
-            style={[
-              styles.statusDot,
-              { backgroundColor: display.badgeColor },
-            ]}
-          />
-          <AppText style={styles.apiStatusPillText}>{display.badgeText}</AppText>
-          <Ionicons name={showApiConsole ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textInverseSecondary} />
-        </Pressable>
+        <View style={styles.dualStatusHeaderRow}>
+          {/* Badge 1: Trạng thái sự cố */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Xem chi tiết kết nối API sự cố"
+            onPress={() => setShowApiConsole(!showApiConsole)}
+            style={styles.apiStatusPill}
+          >
+            <View style={[styles.statusDot, { backgroundColor: incidentInfo.badgeColor }]} />
+            <AppText style={styles.apiStatusPillText}>{incidentInfo.badgeText}</AppText>
+            <Ionicons name={showApiConsole ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textInverseSecondary} />
+          </Pressable>
+
+          {/* Badge 2: Trạng thái cuộc gọi đàm thoại */}
+          <View style={[styles.apiStatusPill, { borderColor: callInfo.badgeColor }]}>
+            <View style={[styles.statusDot, { backgroundColor: callInfo.badgeColor }]} />
+            <AppText style={styles.apiStatusPillText}>{callInfo.badgeText}</AppText>
+          </View>
+        </View>
       </View>
 
-      {/* 2. Collapsible API Telemetry Inspector */}
-      {showApiConsole && (
-        <View style={styles.apiConsoleBox}>
-          <View style={styles.apiConsoleHeader}>
-            <Ionicons name="radio-outline" size={14} color={colors.danger} />
-            <AppText style={styles.apiConsoleTitle}>LIVE INCIDENTS SOS TELEMETRY</AppText>
+      {/* 2. Scrollable Middle Section (tránh bị cắt nội dung trên màn hình ngang) */}
+      <ScrollView
+        style={styles.centerScroll}
+        contentContainerStyle={styles.centerContainer}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Collapsible API Telemetry Inspector */}
+        {showApiConsole && (
+          <View style={styles.apiConsoleBox}>
+            <View style={styles.apiConsoleHeader}>
+              <Ionicons name="radio-outline" size={14} color={colors.danger} />
+              <AppText style={styles.apiConsoleTitle}>LIVE INCIDENTS & MEDIA TELEMETRY</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>BASE URL:</AppText>
+              <AppText style={styles.apiEndpoint} numberOfLines={1}>
+                {apiClient.getBaseUrl()}
+              </AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>ROUTING SOS:</AppText>
+              <AppText style={styles.apiValue}>{sosRoutingStatus || 'Chưa rõ'}</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>MÃ SỰ CỐ:</AppText>
+              <AppText style={styles.apiValue}>{incidentId || 'Chưa nhận'}</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>PHIÊN MEDIA:</AppText>
+              <AppText style={styles.apiValue}>{mediaSessionId || 'Chờ LiveKit'}</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>OP KEY:</AppText>
+              <AppText style={styles.apiValue}>{operationKeyRef.current}</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>ENDPOINT:</AppText>
+              <AppText style={styles.apiEndpoint}>{apiLogs.lastCall}</AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>TRẠNG THÁI:</AppText>
+              <AppText style={styles.apiStatusVal}>
+                {apiLogs.status} ({apiLogs.latencyMs}ms) · Call: {callState}
+              </AppText>
+            </View>
+            <View style={styles.apiRow}>
+              <AppText style={styles.apiLabel}>PHẢN HỒI:</AppText>
+              <AppText style={styles.apiRes} numberOfLines={2}>
+                {apiLogs.lastResult}
+              </AppText>
+            </View>
           </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>MÃ SỰ CỐ:</AppText>
-            <AppText style={styles.apiValue}>{incidentId || 'Chưa nhận'}</AppText>
-          </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>OP KEY:</AppText>
-            <AppText style={styles.apiValue}>{operationKeyRef.current}</AppText>
-          </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>ENDPOINT:</AppText>
-            <AppText style={styles.apiEndpoint}>{apiLogs.lastCall}</AppText>
-          </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>TRẠNG THÁI:</AppText>
-            <AppText style={styles.apiStatusVal}>
-              {apiLogs.status} ({apiLogs.latencyMs}ms)
-            </AppText>
-          </View>
-          <View style={styles.apiRow}>
-            <AppText style={styles.apiLabel}>PHẢN HỒI:</AppText>
-            <AppText style={styles.apiRes} numberOfLines={2}>
-              {apiLogs.lastResult}
-            </AppText>
-          </View>
-        </View>
-      )}
+        )}
 
-      {/* 3. Main Center Content Card */}
-      <View style={styles.centerContainer}>
         {/* Concentric Rings Visual */}
         <View
           style={[
             styles.outerRing,
             isAcknowledged && styles.outerRingSuccess,
-            sosState === 'FAILED' && styles.outerRingFailed,
+            incidentState === 'FAILED' && styles.outerRingFailed,
           ]}
         >
           <View
             style={[
               styles.middleRing,
               isAcknowledged && styles.middleRingSuccess,
-              sosState === 'FAILED' && styles.middleRingFailed,
+              incidentState === 'FAILED' && styles.middleRingFailed,
             ]}
           >
             <View style={styles.avatarCircle}>
-              {display.isWorking ? (
+              {incidentInfo.isWorking ? (
                 <ActivityIndicator size="large" color={colors.danger} />
               ) : (
                 <Ionicons
-                  name={isAcknowledged ? 'medkit' : sosState === 'FAILED' ? 'alert-circle' : 'megaphone'}
-                  size={46}
-                  color={isAcknowledged ? colors.successText : sosState === 'FAILED' ? colors.danger : colors.textPrimary}
+                  name={isAcknowledged ? 'medkit' : incidentState === 'FAILED' ? 'alert-circle' : 'megaphone'}
+                  size={42}
+                  color={isAcknowledged ? colors.successText : incidentState === 'FAILED' ? colors.danger : colors.textPrimary}
                 />
               )}
             </View>
           </View>
         </View>
 
-        {/* Dynamic Title & Subtitle */}
+        {/* Dynamic Title & Subtitle của Sự cố */}
         <AppText variant="title" style={styles.statusTitle}>
-          {display.title}
+          {incidentInfo.title}
         </AppText>
-        <AppText variant="body" style={styles.statusSubtitle}>
-          {display.subtitle}
+        <AppText
+          variant="body"
+          style={[styles.statusSubtitle, incidentState === 'FAILED' && styles.statusSubtitleError]}
+        >
+          {incidentInfo.subtitle}
         </AppText>
 
-        {/* Action Status Wave or Error Retry */}
-        {sosState === 'FAILED' ? (
-          <View style={styles.failedContainer}>
+        {/* Khối hiển thị trạng thái Cuộc gọi Đàm thoại 2 chiều riêng biệt */}
+        {incidentState !== 'FAILED' && (
+          <View style={styles.callStatusCard}>
+            <View style={styles.callStatusHeader}>
+              <Ionicons
+                name={callState === 'CONNECTED' ? 'call' : 'headset'}
+                size={18}
+                color={callInfo.badgeColor}
+              />
+              <AppText style={[styles.callingStatusText, { color: callInfo.badgeColor }]}>
+                {callInfo.statusText}
+              </AppText>
+            </View>
+
+            {callInfo.showWave && (
+              <View style={styles.waveWrap}>
+                <AudioWaveform
+                  color={callState === 'CONNECTED' ? '#10B981' : colors.warningText}
+                  count={22}
+                  height={18}
+                />
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Real-time Tọa độ định vị */}
+        <View style={styles.locationNotice}>
+          <Ionicons name="navigate-circle" size={18} color={colors.textInverseSecondary} />
+          <AppText style={styles.locationNoticeText}>
+            {hasValidCoords
+              ? `Tọa độ Robot: X: ${xM.toFixed(2)}m · Y: ${yM.toFixed(2)}m${roomName ? ` · ${roomName}` : ''}`
+              : 'Chưa có tọa độ định vị chính xác'}
+          </AppText>
+        </View>
+
+        {/* Cảnh báo phân tuyến SOS từ BE nếu chưa có người trực hợp lệ */}
+        {routingWarning && !isAcknowledged && incidentState !== 'FAILED' && (
+          <View style={styles.routingWarningCard}>
+            <Ionicons name="warning-outline" size={18} color={colors.warningText} />
+            <AppText style={styles.routingWarningText}>{routingWarning}</AppText>
+          </View>
+        )}
+
+        {/* Card thông báo tiếp nhận sự cố */}
+        {isAcknowledged && (
+          <View style={styles.acknowledgedCard}>
+            <Ionicons name="checkmark-circle" size={22} color={colors.successText} />
+            <View style={{ flex: 1 }}>
+              <AppText style={styles.acknowledgedTitle}>
+                NHÂN VIÊN Y TẾ ĐÃ TIẾP NHẬN SỰ CỐ
+              </AppText>
+              <AppText style={styles.acknowledgedSub}>
+                Bệnh nhân vui lòng giữ nguyên vị trí cạnh robot. Trợ giúp y tế đang được triển khai.
+              </AppText>
+            </View>
+          </View>
+        )}
+
+        {/* Card ghi rõ trách nhiệm phần cứng phía Pi */}
+        <View style={styles.hardwareDisclaimerCard}>
+          <Ionicons name="hardware-chip-outline" size={15} color={colors.textInverseSecondary} />
+          <AppText style={styles.hardwareDisclaimerText}>
+            Phần cứng đàm thoại (Microphone, Loa phát thanh và Camera LiveKit) chạy trực tiếp trên Raspberry Pi (media_bridge). Màn hình tablet hiển thị trạng thái và hỗ trợ tương tác tại chỗ cho bệnh nhân.
+          </AppText>
+        </View>
+      </ScrollView>
+
+      {/* 3. Bottom Control Section */}
+      <View style={styles.bottomSection}>
+        <View style={styles.timerRow}>
+          <View style={styles.timerBadge}>
+            <View
+              style={[
+                styles.timerDot,
+                isAcknowledged && { backgroundColor: '#10B981' },
+                incidentState === 'FAILED' && { backgroundColor: colors.danger },
+              ]}
+            />
+            <AppText style={styles.timerText}>
+              Thời gian mở màn hình SOS : {formatTimer(callSeconds)}
+            </AppText>
+          </View>
+        </View>
+
+        {/* End Call / Retry / Exit Buttons */}
+        <View style={styles.actionsRow}>
+          {incidentState === 'FAILED' && (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Thử lại gửi tín hiệu SOS"
@@ -402,72 +647,7 @@ export function SosCallScreen({ route, navigation }: Props) {
                 </>
               )}
             </Pressable>
-          </View>
-        ) : (
-          <View style={styles.statusBox}>
-            <AppText
-              style={[
-                styles.callingStatusText,
-                isAcknowledged && { color: '#34D399' },
-              ]}
-            >
-              {display.statusText}
-            </AppText>
-            <View style={styles.waveWrap}>
-              <AudioWaveform
-                color={isAcknowledged ? colors.successText : colors.warningText}
-                count={18}
-                height={16}
-              />
-            </View>
-          </View>
-        )}
-
-        {/* Real-time Tọa độ định vị */}
-        <View style={styles.locationNotice}>
-          <Ionicons name="navigate-circle" size={18} color={colors.textInverseSecondary} />
-          <AppText style={styles.locationNoticeText}>
-            {hasValidCoords
-              ? `Tọa độ Robot: X: ${xM.toFixed(2)}m · Y: ${yM.toFixed(2)}m${roomName ? ` · ${roomName}` : ''}`
-              : 'Chưa có tọa độ định vị chính xác'}
-          </AppText>
-        </View>
-
-        {/* Card thông báo tiếp nhận */}
-        {isAcknowledged && (
-          <View style={styles.acknowledgedCard}>
-            <Ionicons name="checkmark-circle" size={22} color={colors.successText} />
-            <View style={{ flex: 1 }}>
-              <AppText style={styles.acknowledgedTitle}>
-                NHÂN VIÊN Y TẾ ĐÃ TIẾP NHẬN SỰ CỐ
-              </AppText>
-              <AppText style={styles.acknowledgedSub}>
-                Bệnh nhân vui lòng giữ nguyên vị trí cạnh robot. Trợ giúp y tế đang được triển khai.
-              </AppText>
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* 4. Bottom Control Section */}
-      <View style={styles.bottomSection}>
-        <View style={styles.timerRow}>
-          <View style={styles.timerBadge}>
-            <View
-              style={[
-                styles.timerDot,
-                isAcknowledged && { backgroundColor: '#10B981' },
-                sosState === 'FAILED' && { backgroundColor: colors.danger },
-              ]}
-            />
-            <AppText style={styles.timerText}>
-              Thời gian mở màn hình SOS : {formatTimer(callSeconds)}
-            </AppText>
-          </View>
-        </View>
-
-        {/* End Call / Exit Button */}
-        <View style={styles.actionsRow}>
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Đóng màn hình SOS khẩn cấp"
@@ -477,7 +657,7 @@ export function SosCallScreen({ route, navigation }: Props) {
               pressed && { transform: [{ scale: 0.96 }], opacity: 0.9 },
             ]}
           >
-            <Ionicons name="close" size={26} color="#FFFFFF" />
+            <Ionicons name="close" size={22} color="#FFFFFF" />
             <AppText style={styles.endCallText}>Kết thúc · Đóng SOS</AppText>
           </Pressable>
         </View>
@@ -490,14 +670,39 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.callBg,
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.lg,
   },
   topHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
     paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.darkRaised,
+    borderWidth: 1,
+    borderColor: '#475569',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radii.pill,
+    minHeight: 36,
+  },
+  backButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   sosBadge: {
     flexDirection: 'row',
@@ -522,6 +727,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.4,
   },
+  dualStatusHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
   apiStatusPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -542,6 +754,42 @@ const styles = StyleSheet.create({
     color: colors.textInverse,
     fontSize: 12,
     fontWeight: '600',
+  },
+  callStatusCard: {
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    gap: spacing.xs,
+    maxWidth: 480,
+    marginTop: spacing.xs,
+  },
+  callStatusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  hardwareDisclaimerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    maxWidth: 520,
+    marginTop: spacing.xs,
+  },
+  hardwareDisclaimerText: {
+    flex: 1,
+    color: colors.textInverseSecondary,
+    fontSize: 11,
+    lineHeight: 15,
   },
   apiConsoleBox: {
     backgroundColor: colors.hero,
@@ -598,22 +846,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     flex: 1,
   },
+  centerScroll: {
+    flex: 1,
+  },
   centerContainer: {
+    flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: spacing.lg,
-    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    gap: spacing.xs + 2,
   },
   outerRing: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     borderWidth: 2,
     borderColor: colors.darkRaised,
     backgroundColor: 'rgba(45, 45, 49, 0.4)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.xs,
   },
   outerRingSuccess: {
     borderColor: '#166534',
@@ -624,9 +875,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(198, 40, 40, 0.2)',
   },
   middleRing: {
-    width: 104,
-    height: 104,
-    borderRadius: 52,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     borderWidth: 2,
     borderColor: colors.darkRaised,
     backgroundColor: 'rgba(45, 45, 49, 0.6)',
@@ -642,9 +893,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(153, 27, 27, 0.3)',
   },
   avatarCircle: {
-    width: 78,
-    height: 78,
-    borderRadius: 39,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
@@ -657,7 +908,12 @@ const styles = StyleSheet.create({
   statusSubtitle: {
     color: colors.textInverseSecondary,
     textAlign: 'center',
-    maxWidth: 420,
+    maxWidth: 520,
+  },
+  statusSubtitleError: {
+    color: '#FCA5A5',
+    fontSize: 13,
+    lineHeight: 18,
   },
   failedContainer: {
     marginTop: spacing.xs,
@@ -665,12 +921,12 @@ const styles = StyleSheet.create({
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.danger,
+    backgroundColor: colors.mapRoute,
     paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
     borderRadius: radii.pill,
-    minHeight: 52,
+    minHeight: 46,
   },
   retryButtonText: {
     color: '#FFFFFF',
@@ -718,6 +974,26 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     marginTop: spacing.xs,
   },
+  routingWarningCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(245, 158, 11, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    maxWidth: 520,
+    marginTop: spacing.xs,
+  },
+  routingWarningText: {
+    flex: 1,
+    color: colors.warningText,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
   acknowledgedTitle: {
     color: '#34D399',
     fontSize: 12,
@@ -730,7 +1006,8 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   bottomSection: {
-    gap: spacing.md,
+    gap: spacing.xs + 2,
+    paddingTop: spacing.xs,
     alignItems: 'center',
   },
   timerRow: {
@@ -756,6 +1033,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.md,
   },
   endCallButton: {
     flexDirection: 'row',
@@ -763,8 +1042,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: spacing.sm,
     backgroundColor: colors.danger,
-    minHeight: 56,
-    paddingHorizontal: spacing.xxl,
+    minHeight: 46,
+    paddingHorizontal: spacing.xl,
     borderRadius: radii.pill,
     shadowColor: colors.danger,
     shadowOffset: { width: 0, height: 4 },

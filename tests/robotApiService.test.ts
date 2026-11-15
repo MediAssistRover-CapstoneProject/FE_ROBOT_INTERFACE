@@ -8,9 +8,10 @@ vi.mock('expo-constants', () => ({
   },
 }));
 
-import { apiClient } from '../src/services/api/client';
+import { apiClient, parseDeviceJwtClaims } from '../src/services/api/client';
 import { createPiEnvelope } from '../src/services/api/envelope';
 import { robotApiService } from '../src/services/api/robotApiService';
+import { REMOTE_API_BASE, robotMapService } from '../src/services/api/robotMapService';
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -125,6 +126,38 @@ describe('apiClient', () => {
     });
     expect(res).toEqual({});
   });
+
+  it('parses and applies valid pre-issued Device JWT claims without fetching auth endpoint', async () => {
+    apiClient.clearToken();
+    const expSec = Math.floor(Date.now() / 1000) + 1800;
+    const payload = Buffer.from(
+      JSON.stringify({
+        robotId: '0e3f1083-2546-4f45-8004-5eda5cb75a6f',
+        robotCode: 'mar-v1',
+        exp: expSec,
+      }),
+    ).toString('base64url');
+    const fakeJwt = `hdr.${payload}.sig`;
+
+    expect(parseDeviceJwtClaims(fakeJwt)?.robotCode).toBe('mar-v1');
+    expect(apiClient.applyPreissuedToken(fakeJwt)).toBe(true);
+    expect(apiClient.getRobotId()).toBe('0e3f1083-2546-4f45-8004-5eda5cb75a6f');
+
+    const fetchMock = vi.fn<typeof fetch>();
+    global.fetch = fetchMock;
+    const tok = await apiClient.ensureDeviceToken();
+    expect(tok).toBe(fakeJwt);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects expired pre-issued Device JWT', () => {
+    apiClient.clearToken();
+    const expiredSec = Math.floor(Date.now() / 1000) - 60;
+    const payload = Buffer.from(
+      JSON.stringify({ robotId: 'robot-expired', exp: expiredSec }),
+    ).toString('base64url');
+    expect(apiClient.applyPreissuedToken(`hdr.${payload}.sig`)).toBe(false);
+  });
 });
 
 describe('robotApiService', () => {
@@ -222,6 +255,27 @@ describe('robotApiService', () => {
     expect(body.payload.yM).toBe(20);
   });
 
+  it('triggerSos rounds xM and yM to at most 4 decimal places for BE @Digits(8,4)', async () => {
+    const sosRes = {
+      incident: { incidentId: 'INC_ROUND_1', status: 'OPEN' as const },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sosRes));
+    global.fetch = fetchMock;
+
+    await robotApiService.triggerSos(
+      'SOS tọa độ lẻ dài',
+      'CRITICAL',
+      0.328491029481,
+      -0.081928374123,
+      'map-123',
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init?.body as string);
+    expect(body.payload.xM).toBe(0.3285);
+    expect(body.payload.yM).toBe(-0.0819);
+  });
+
   it('triggerSos preserves stable operationKey and sets Idempotency-Key header', async () => {
     const sosRes = {
       incident: { incidentId: 'INC_REAL_123', status: 'REPORTED' as const },
@@ -243,6 +297,34 @@ describe('robotApiService', () => {
     expect(body.payload.mapId).toBeUndefined();
   });
 
+  it('triggerSos surfaces baseUrl and auth error details when device token fails', async () => {
+    apiClient.clearToken();
+    apiClient.setBaseUrl('https://mediassistrover.duckdns.org');
+    global.fetch = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('Invalid device secret', { status: 401, statusText: 'Unauthorized' }),
+    );
+
+    await expect(robotApiService.triggerSos('SOS test')).rejects.toThrow(
+      /mediassistrover\.duckdns\.org.*HTTP 401.*Invalid device secret/,
+    );
+    expect(apiClient.getLastAuthError()).toContain('HTTP 401');
+  });
+
+  it('triggerSos preserves sosRoutingStatus returned from backend', async () => {
+    const sosRes = {
+      incident: {
+        incidentId: 'INC_NO_SHIFT_1',
+        status: 'OPEN' as const,
+        sosRoutingStatus: 'NO_ACTIVE_SHIFT' as const,
+        sosResponderAccountId: null,
+      },
+    };
+    global.fetch = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(sosRes));
+
+    const res = await robotApiService.triggerSos('SOS test');
+    expect(res.incident?.sosRoutingStatus).toBe('NO_ACTIVE_SHIFT');
+  });
+
   it('getIncidentStatus queries GET /api/v1/pi/incidents/{id}', async () => {
     const statusRes = {
       incidentId: 'INC_REAL_123',
@@ -257,6 +339,28 @@ describe('robotApiService', () => {
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://localhost:8080/api/v1/pi/incidents/INC_REAL_123');
+    expect(init?.method).toBe('GET');
+  });
+
+  it('getDeviceMediaSession queries GET /api/v1/pi/media-session and returns active session', async () => {
+    const mediaRes = {
+      enabled: true,
+      session: {
+        sessionId: 'session-xyz',
+        robotId: 'ROBOT_01',
+        mode: 'ASSIST',
+        state: 'ACTIVE',
+      },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(mediaRes));
+    global.fetch = fetchMock;
+
+    const res = await robotApiService.getDeviceMediaSession();
+    expect(res?.enabled).toBe(true);
+    expect(res?.session?.state).toBe('ACTIVE');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/media-session');
     expect(init?.method).toBe('GET');
   });
 
@@ -387,5 +491,200 @@ describe('robotApiService', () => {
     expect(url).toBe('http://localhost:8080/api/v1/pi/requests/req-escort-123/cancel');
     const headers = init?.headers as Record<string, string>;
     expect(headers['Idempotency-Key']).toBe('cancel-op-key');
+  });
+});
+
+describe('robotMapService.loadMapPackage', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('prefers GET /maps/{mapId}/presentation/published and attaches source metadata', async () => {
+    const mapId = 'bdf6503a-d38e-4bde-9a67-763e91668593';
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-token' });
+      }
+      if (url.startsWith(`${REMOTE_API_BASE}/maps?`)) {
+        return jsonResponse({ content: [{ mapId, mapName: 'map mới nhất' }] });
+      }
+      if (url.startsWith(`${REMOTE_API_BASE}/endpoints?`)) {
+        return jsonResponse({
+          content: [{ endpointId: 'ep-1', mapId, endpointCode: 'letan', xM: 0.6, yM: 3.1, active: true }],
+        });
+      }
+      if (url.startsWith(`${REMOTE_API_BASE}/zones?`)) {
+        return jsonResponse({ content: [] });
+      }
+      if (url.endsWith('/snapshot')) {
+        return jsonResponse({});
+      }
+      if (url === `${REMOTE_API_BASE}/maps/${mapId}/image-metadata`) {
+        return jsonResponse({ width_px: 154, height_px: 169 });
+      }
+      if (url === `${REMOTE_API_BASE}/maps/${mapId}/presentation/published`) {
+        return jsonResponse({
+          source: { mapId, widthPx: 154, heightPx: 169, resolutionMPerPixel: 0.025 },
+          revision: 3,
+          document: {
+            backgroundColor: '#f8fafc',
+            rotationDegrees: -95.2,
+            features: [{ id: 'w-1', type: 'WALL', points: [{ x: 0.1, y: 0.2 }, { x: 1.1, y: 0.2 }] }],
+          },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const pkg = await robotMapService.loadMapPackage(mapId);
+    const urls = fetchMock.mock.calls.map(([u]) => (typeof u === 'string' ? u : u.toString()));
+
+    expect(urls).toContain(`${REMOTE_API_BASE}/maps/${mapId}/presentation/published`);
+    expect(urls).not.toContain(`${REMOTE_API_BASE}/maps/${mapId}/presentation`);
+    expect(pkg.presentation?.backgroundColor).toBe('#f8fafc');
+    expect(pkg.presentation?.rotationDegrees).toBe(-95.2);
+    expect(pkg.presentation?.features).toHaveLength(1);
+    expect(pkg.presentation?.source?.widthPx).toBe(154);
+  });
+
+  it('returns null presentation when a map has neither /presentation/published nor /presentation', async () => {
+    const mapId = 'custom-map-without-pres';
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith(`${REMOTE_API_BASE}/maps?`)) {
+        return jsonResponse({ content: [{ mapId, mapName: 'SLAM raw map' }] });
+      }
+      if (url.startsWith(`${REMOTE_API_BASE}/endpoints?`)) {
+        return jsonResponse({
+          content: [{ endpointId: 'ep-2', mapId, endpointCode: 'phong01', xM: 1.0, yM: 1.0, active: true }],
+        });
+      }
+      if (url.startsWith(`${REMOTE_API_BASE}/zones?`)) {
+        return jsonResponse({ content: [] });
+      }
+      if (url.endsWith('/snapshot')) {
+        return jsonResponse({});
+      }
+      if (url === `${REMOTE_API_BASE}/maps/${mapId}/image-metadata`) {
+        return jsonResponse({ width_px: 120, height_px: 120 });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const pkg = await robotMapService.loadMapPackage(mapId);
+    expect(pkg.activeMap.mapId).toBe(mapId);
+    expect(pkg.presentation).toBeNull();
+  });
+
+  it('resolves existing published NAVIGATION workflow and dispatches navigation only when IDLE without active job', async () => {
+    apiClient.setBaseUrl('http://localhost:8080');
+    apiClient.setToken('device-token', 'robot-1');
+
+    const mapId = 'bdf6503a-d38e-4bde-9a67-763e91668593';
+    const existingWfId = 'wf-nav-published-v3';
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-token' });
+      }
+      if (url === `${REMOTE_API_BASE}/robots`) {
+        return jsonResponse({ content: [{ robotId: 'robot-1', robotCode: 'ROBOT_MAR_01' }] });
+      }
+      if (url.endsWith('/snapshot')) {
+        return jsonResponse({
+          robot: { status: 'IDLE', batteryRaw: 8500 },
+          mqttConnected: true,
+          heartbeatFresh: true,
+          activeJobId: null,
+          navigationSession: { sessionId: 'sess-1', mapId, state: 'READY' },
+        });
+      }
+      if (url.endsWith('/navigation-guidance')) {
+        return jsonResponse({ state: 'IDLE' });
+      }
+      if (url === 'http://localhost:8080/api/v1/pi/workflows') {
+        return jsonResponse([
+          {
+            workflow: {
+              workflowId: 'wf-nav-v2',
+              serviceType: 'NAVIGATION',
+              status: 'PUBLISHED',
+              acceptsNewJobs: true,
+              schemaVersion: 2,
+              versionNo: 1,
+            },
+          },
+          {
+            workflow: {
+              workflowId: existingWfId,
+              serviceType: 'NAVIGATION',
+              status: 'PUBLISHED',
+              acceptsNewJobs: true,
+              schemaVersion: 3,
+              versionNo: 2,
+            },
+          },
+        ]);
+      }
+      if (url === 'http://localhost:8080/api/v1/pi/requests/navigation') {
+        const body = JSON.parse(String(init?.body || '{}'));
+        const headers = init?.headers as Record<string, string>;
+        expect(headers['Idempotency-Key']).toBeTruthy();
+        expect(body.workflowId).toBe(existingWfId);
+        expect(body.destinationEndpointId).toBe('ep-sos');
+        expect(body.navigationSessionId).toBe('sess-1');
+        return jsonResponse({
+          request: { serviceRequestId: 'req-nav-1', status: 'QUEUED' },
+          workflowId: existingWfId,
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const result = await robotMapService.dispatchMoveWorkflow('ep-sos', mapId, 'sess-1');
+    const urls = fetchMock.mock.calls.map(([u]) => (typeof u === 'string' ? u : u.toString()));
+
+    expect(result.ok).toBe(true);
+    expect(result.workflowId).toBe(existingWfId);
+    expect(result.serviceRequestId).toBe('req-nav-1');
+    expect(urls.some((u) => u.includes('test-workflows/run'))).toBe(false);
+  });
+
+  it('blocks navigation dispatch when robot is not IDLE or already has an active job', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-token' });
+      }
+      if (url === `${REMOTE_API_BASE}/robots`) {
+        return jsonResponse({ content: [{ robotId: 'robot-1', robotCode: 'ROBOT_MAR_01' }] });
+      }
+      if (url.endsWith('/snapshot')) {
+        return jsonResponse({
+          robot: { status: 'BUSY', batteryRaw: 8500 },
+          activeJobId: 'job-running-1',
+        });
+      }
+      if (url.endsWith('/navigation-guidance')) {
+        return jsonResponse({ state: 'IDLE' });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const result = await robotMapService.dispatchMoveWorkflow('ep-sos', 'map-1');
+    const urls = fetchMock.mock.calls.map(([u]) => (typeof u === 'string' ? u : u.toString()));
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('BUSY');
+    expect(urls.some((u) => u.includes('/requests/navigation'))).toBe(false);
+    expect(urls.some((u) => u.includes('test-workflows/run'))).toBe(false);
   });
 });
