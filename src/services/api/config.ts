@@ -1,9 +1,11 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
+const DEFAULT_ROBOT_API_URL = 'https://mediassistrover.duckdns.org';
+
 const getBackendBaseUrl = (): string => {
   if (Platform.OS === 'web') {
-    return (process.env.EXPO_PUBLIC_ROBOT_API_URL || 'http://localhost:8080').replace(/\/+$/, '');
+    return (process.env.EXPO_PUBLIC_ROBOT_API_URL || DEFAULT_ROBOT_API_URL).replace(/\/+$/, '');
   }
 
   // Trên thiết bị thật (iPhone/Android qua Expo Go):
@@ -11,7 +13,7 @@ const getBackendBaseUrl = (): string => {
   const hostUri = Constants.expoConfig?.hostUri;
   const lanIp = hostUri ? hostUri.split(':')[0] : '192.168.88.54';
 
-  const raw = process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() || 'http://localhost:8080';
+  const raw = process.env.EXPO_PUBLIC_ROBOT_API_URL?.trim() || DEFAULT_ROBOT_API_URL;
   if (raw.includes('localhost') || raw.includes('127.0.0.1')) {
     return raw.replace('localhost', lanIp).replace('127.0.0.1', lanIp).replace(/\/+$/, '');
   }
@@ -24,8 +26,14 @@ export const API_BASE_URL = getBackendBaseUrl();
 export const DEFAULT_ROBOT_CODE =
   process.env.EXPO_PUBLIC_ROBOT_CODE || 'ROBOT_MAR_01';
 
+export const DEFAULT_ROBOT_ID =
+  process.env.EXPO_PUBLIC_ROBOT_ID?.trim() || '';
+
 export const DEFAULT_DEVICE_SECRET =
   process.env.EXPO_PUBLIC_ROBOT_SECRET || '6rGL6RPV9VgbVZfmcHXmA2uz-oST8speM1bO1eI1ozg';
+
+export const DEFAULT_DEVICE_TOKEN =
+  process.env.EXPO_PUBLIC_DEVICE_TOKEN?.trim() || '';
 
 let sequenceCounter = 1;
 

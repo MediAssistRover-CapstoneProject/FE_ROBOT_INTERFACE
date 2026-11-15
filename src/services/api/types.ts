@@ -73,6 +73,14 @@ export interface SosPayload {
   yM?: number;
 }
 
+export type SosRoutingStatus =
+  | 'ASSIGNED'
+  | 'NO_MONITORING_ROOM'
+  | 'ROOM_UNAVAILABLE'
+  | 'NO_ACTIVE_SHIFT'
+  | 'AMBIGUOUS_SHIFT'
+  | string;
+
 export interface IncidentResponse {
   incidentId: string;
   robotId?: string;
@@ -82,7 +90,7 @@ export interface IncidentResponse {
   resolvedByAccountId?: string;
   incidentType?: string;
   severity?: 'WARNING' | 'CRITICAL';
-  status: 'REPORTED' | 'ACKNOWLEDGED' | 'RESOLVED' | 'CLOSED';
+  status: 'REPORTED' | 'OPEN' | 'ACKNOWLEDGED' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED' | 'FALSE_ALARM';
   description?: string;
   xM?: number;
   yM?: number;
@@ -91,6 +99,8 @@ export interface IncidentResponse {
   resolvedAt?: string;
   closedAt?: string;
   rowVersion?: number;
+  sosResponderAccountId?: string | null;
+  sosRoutingStatus?: SosRoutingStatus | null;
 }
 
 export interface SosResponse {
@@ -157,6 +167,45 @@ export interface NavigationCreateRequest {
   arrivalInstruction?: string;
   priority?: number;
   note?: string;
+  robotId?: string;
+  navigationSessionId?: string;
+}
+
+export interface NavigationResponse {
+  request: {
+    serviceRequestId: string;
+    requestCode?: string;
+    requestType?: string;
+    status?: string;
+    priority?: number;
+    requestNote?: string;
+    requestedAt?: string;
+  };
+  mapId?: string;
+  workflowId?: string;
+  roomId?: string;
+  originEndpointId?: string;
+  destinationEndpointId?: string;
+  destinationGroupId?: string;
+  resolvedEndpointId?: string;
+  targetMode?: string;
+  navigationMode?: string;
+  accessibilityNeed?: string;
+  passengerCount?: number;
+  arrivalInstruction?: string;
+}
+
+export interface PublishedWorkflowItem {
+  workflow: {
+    workflowId: string;
+    workflowCode?: string;
+    workflowName?: string;
+    serviceType?: string;
+    versionNo?: number;
+    status?: string;
+    acceptsNewJobs?: boolean;
+    schemaVersion?: number;
+  };
 }
 
 export interface EscortCreateRequest {

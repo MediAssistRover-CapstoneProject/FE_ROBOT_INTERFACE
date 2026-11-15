@@ -1,7 +1,9 @@
 import {
   API_BASE_URL,
   DEFAULT_ROBOT_CODE,
+  DEFAULT_ROBOT_ID,
   DEFAULT_DEVICE_SECRET,
+  DEFAULT_DEVICE_TOKEN,
   generateUuid,
 } from './config';
 import { DeviceTokenResponse } from './types';
@@ -14,11 +16,72 @@ export interface RequestOptions {
   timeoutMs?: number;
 }
 
+interface DeviceJwtClaims {
+  robotId?: string;
+  robotCode?: string;
+  exp?: number;
+}
+
+function decodeBase64Url(input: string): string {
+  const b64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+  if (typeof globalThis.atob === 'function') {
+    return globalThis.atob(padded);
+  }
+  const B = (globalThis as { Buffer?: { from(s: string, enc: string): { toString(enc: string): string } } }).Buffer;
+  if (B) {
+    return B.from(padded, 'base64').toString('utf8');
+  }
+  throw new Error('Base64 decoder unavailable');
+}
+
+export function parseDeviceJwtClaims(token: string): DeviceJwtClaims | null {
+  try {
+    const parts = token.split('.');
+    const payload = parts[1];
+    if (!payload) return null;
+    const json = decodeBase64Url(payload);
+    return JSON.parse(json) as DeviceJwtClaims;
+  } catch {
+    return null;
+  }
+}
+
 class ApiClient {
   private baseUrl: string = API_BASE_URL;
   private token: string | null = null;
   private robotId: string | null = null;
   private tokenExpiresAt: number = 0;
+  private lastAuthError: string | null = null;
+
+  constructor() {
+    if (DEFAULT_DEVICE_TOKEN) {
+      this.applyPreissuedToken(DEFAULT_DEVICE_TOKEN);
+    }
+  }
+
+  public applyPreissuedToken(jwtToken: string): boolean {
+    const trimmed = jwtToken.trim();
+    if (!trimmed) return false;
+    const claims = parseDeviceJwtClaims(trimmed);
+    const now = Date.now();
+    const expMs = typeof claims?.exp === 'number' ? claims.exp * 1000 : now + 3600 * 1000;
+    if (expMs <= now + 5_000) {
+      this.lastAuthError = `Device JWT đã hết hạn (${new Date(expMs).toISOString()})`;
+      console.warn('[API AUTH] Token cấu hình đã hết hạn:', new Date(expMs).toISOString());
+      return false;
+    }
+    this.token = trimmed;
+    this.robotId = claims?.robotId || DEFAULT_ROBOT_ID || null;
+    this.tokenExpiresAt = expMs;
+    this.lastAuthError = null;
+    console.log('[API AUTH] Đã nạp Device JWT', {
+      robotId: this.robotId,
+      robotCode: claims?.robotCode || DEFAULT_ROBOT_CODE,
+      expiresAt: new Date(expMs).toISOString(),
+    });
+    return true;
+  }
 
   public setBaseUrl(url: string) {
     this.baseUrl = url.replace(/\/+$/, '');
@@ -29,13 +92,24 @@ class ApiClient {
   }
 
   public getRobotId(): string | null {
-    return this.robotId || (process.env.EXPO_PUBLIC_ROBOT_ID as string) || null;
+    return this.robotId || DEFAULT_ROBOT_ID || (process.env.EXPO_PUBLIC_ROBOT_ID as string) || null;
+  }
+
+  public getLastAuthError(): string | null {
+    return this.lastAuthError;
   }
 
   public setToken(token: string, robotId?: string, expiresInMs = 3600 * 1000) {
     this.token = token;
     if (robotId) this.robotId = robotId;
     this.tokenExpiresAt = Date.now() + expiresInMs;
+    this.lastAuthError = null;
+  }
+
+  public clearToken() {
+    this.token = null;
+    this.tokenExpiresAt = 0;
+    this.lastAuthError = null;
   }
 
   /**
@@ -45,14 +119,26 @@ class ApiClient {
     robotCode = DEFAULT_ROBOT_CODE,
     deviceSecret = DEFAULT_DEVICE_SECRET,
     signal?: AbortSignal,
+    timeoutMs = 10_000,
   ): Promise<string | null> {
     const now = Date.now();
     if (this.token && this.tokenExpiresAt > now + 60_000) {
+      this.lastAuthError = null;
       return this.token;
     }
 
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    if (signal) {
+      if (signal.aborted) controller.abort();
+      else signal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const response = await fetch(`${this.baseUrl}/api/v1/pi/auth/token`, {
+      const authUrl = `${this.baseUrl}/api/v1/pi/auth/token`;
+      console.log(`[API AUTH] POST ${authUrl} (robotCode=${robotCode})`);
+      const response = await fetch(authUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -60,7 +146,7 @@ class ApiClient {
           'X-Request-ID': generateUuid(),
         },
         body: JSON.stringify({ robotCode, deviceSecret }),
-        signal,
+        signal: controller.signal,
       });
 
       if (response.ok) {
@@ -70,10 +156,30 @@ class ApiClient {
         this.tokenExpiresAt = data.expiresAt
           ? new Date(data.expiresAt).getTime()
           : now + 3600 * 1000;
+        this.lastAuthError = null;
+        console.log(`[API AUTH] OK robotId=${data.robotId}`);
         return this.token;
       }
-    } catch {
-      // In dev or sandbox where device is not pre-provisioned, keep fallback token
+
+      const errorText = await response.text().catch(() => '');
+      this.lastAuthError = `HTTP ${response.status}${errorText ? `: ${errorText}` : response.statusText ? `: ${response.statusText}` : ''}`;
+      console.warn(`[API AUTH] Lỗi (${this.baseUrl}):`, this.lastAuthError);
+    } catch (err: unknown) {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      this.lastAuthError = isAbort
+        ? `Quá thời gian chờ (${Math.round(timeoutMs / 1000)}s)`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      console.warn(`[API AUTH] Lỗi kết nối (${this.baseUrl}):`, this.lastAuthError);
+    } finally {
+      clearTimeout(timer);
+      if (signal) {
+        signal.removeEventListener('abort', onExternalAbort);
+      }
+    }
+    if (this.tokenExpiresAt > 0 && this.tokenExpiresAt <= Date.now()) {
+      this.token = null;
     }
     return this.token;
   }
@@ -113,9 +219,9 @@ class ApiClient {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const fullUrl = path.startsWith('http') ? path : `${this.baseUrl}${path}`;
 
     try {
-      const fullUrl = path.startsWith('http') ? path : `${this.baseUrl}${path}`;
       const res = await fetch(fullUrl, {
         method,
         headers: reqHeaders,
@@ -140,6 +246,7 @@ class ApiClient {
     } catch (err: unknown) {
       clearTimeout(timer);
       const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[API ERR] ${method} ${fullUrl}:`, message);
       throw new Error(`Kết nối API thất bại (${path}): ${message}`);
     }
   }

@@ -7,6 +7,8 @@ import {
   DeviceTokenResponse,
   EscortCreateRequest,
   EscortResponse,
+  NavigationResponse,
+  PublishedWorkflowItem,
   DeviceRequestDetailResponse,
   HeartbeatPayload,
   JobErrorPayload,
@@ -28,6 +30,11 @@ import {
   CameraVerifyRequest,
   StaffQrScanWindow,
 } from './types';
+
+function roundCoordMeters(value: number): number {
+  const rounded = Number(value.toFixed(4));
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
 
 class RobotApiService {
   /**
@@ -137,17 +144,28 @@ class RobotApiService {
   ): Promise<SosResponse> {
     const token = await apiClient.ensureDeviceToken();
     const robotId = apiClient.getRobotId();
-    if (!token || !robotId) throw new Error('Robot chưa xác thực được với máy chủ.');
+    if (!token || !robotId) {
+      const authError = apiClient.getLastAuthError();
+      const baseUrl = apiClient.getBaseUrl();
+      throw new Error(
+        authError
+          ? `Robot chưa xác thực được với máy chủ (${baseUrl}): ${authError}`
+          : `Robot chưa xác thực được với máy chủ (${baseUrl}).`,
+      );
+    }
     const hasValidCoords =
-      typeof xM === 'number' && !isNaN(xM) && typeof yM === 'number' && !isNaN(yM);
+      typeof xM === 'number' &&
+      Number.isFinite(xM) &&
+      typeof yM === 'number' &&
+      Number.isFinite(yM);
     const validMapId = hasValidCoords && mapId ? mapId : undefined;
     const payload: SosPayload = {
       mapId: validMapId,
       endpointId: undefined,
       severity,
       description,
-      xM: hasValidCoords ? xM : undefined,
-      yM: hasValidCoords ? yM : undefined,
+      xM: hasValidCoords ? roundCoordMeters(xM) : undefined,
+      yM: hasValidCoords ? roundCoordMeters(yM) : undefined,
     };
     const opKey = operationKey || generateUuid();
     const envelope = createPiEnvelope('EMERGENCY_SOS', payload, {
@@ -165,6 +183,36 @@ class RobotApiService {
 
   public async getIncidentStatus(incidentId: string): Promise<DeviceIncidentStatusResponse> {
     return apiClient.request<DeviceIncidentStatusResponse>(`/api/v1/pi/incidents/${incidentId}`);
+  }
+
+  /**
+   * 5b. Device Media Session (Kiểm tra phiên đàm thoại LiveKit của Robot từ Pi)
+   * GET /api/v1/pi/media-session
+   */
+  public async getDeviceMediaSession(): Promise<{
+    enabled: boolean;
+    session?: {
+      sessionId: string;
+      robotId?: string;
+      incidentId?: string;
+      staffAccountId?: string;
+      mode?: string;
+      state: 'RINGING' | 'ACTIVE' | 'ENDED' | string;
+      createdAt?: string;
+      expiresAt?: string;
+      endedAt?: string;
+      endReason?: string;
+    } | null;
+  } | null> {
+    try {
+      await apiClient.ensureDeviceToken();
+      return await apiClient.request<{
+        enabled: boolean;
+        session?: any;
+      }>('/api/v1/pi/media-session');
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -275,10 +323,60 @@ class RobotApiService {
   /**
    * 8. Patient Screen Requests (Chỉ đường & Hộ tống)
    */
-  public async requestNavigation(params: NavigationCreateRequest): Promise<unknown> {
-    return apiClient.request('/api/v1/pi/requests/navigation', {
+  public async getPublishedWorkflows(): Promise<PublishedWorkflowItem[]> {
+    await apiClient.ensureDeviceToken();
+    const list = await apiClient.request<PublishedWorkflowItem[]>('/api/v1/pi/workflows');
+    return Array.isArray(list) ? list : [];
+  }
+
+  /**
+   * Tìm workflow NAVIGATION đã publish sẵn trên BE (không tạo workflow mới)
+   */
+  public async resolveNavigationWorkflowId(
+    serviceType = 'NAVIGATION',
+  ): Promise<string | undefined> {
+    try {
+      const list = await this.getPublishedWorkflows();
+      const candidates = list
+        .map((item) => item?.workflow)
+        .filter(
+          (wf): wf is PublishedWorkflowItem['workflow'] =>
+            Boolean(
+              wf?.workflowId &&
+                (wf.serviceType || '').toUpperCase() === serviceType.toUpperCase() &&
+                wf.status === 'PUBLISHED' &&
+                wf.acceptsNewJobs !== false,
+            ),
+        )
+        .sort((a, b) => {
+          const schemaDiff = (b.schemaVersion ?? 0) - (a.schemaVersion ?? 0);
+          if (schemaDiff !== 0) return schemaDiff;
+          return (b.versionNo ?? 0) - (a.versionNo ?? 0);
+        });
+      return candidates[0]?.workflowId;
+    } catch {
+      return undefined;
+    }
+  }
+
+  public async requestNavigation(
+    params: NavigationCreateRequest,
+    idempotencyKey?: string,
+  ): Promise<NavigationResponse> {
+    await apiClient.ensureDeviceToken();
+    const key = idempotencyKey || generateUuid();
+    return apiClient.request<NavigationResponse>('/api/v1/pi/requests/navigation', {
       method: 'POST',
-      body: params,
+      headers: {
+        'Idempotency-Key': key,
+      },
+      body: {
+        targetMode: 'ENDPOINT',
+        navigationMode: 'STANDARD',
+        passengerCount: 1,
+        priority: 80,
+        ...params,
+      },
     });
   }
 
