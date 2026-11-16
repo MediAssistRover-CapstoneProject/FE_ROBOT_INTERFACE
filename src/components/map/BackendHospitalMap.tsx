@@ -147,6 +147,8 @@ export interface BackendHospitalMapProps {
   onStopEscort?: () => void;
   isStoppingEscort?: boolean;
   onAutoAlignReady?: (align: SlamAutoAlignResult | null) => void;
+  interactive?: boolean;
+  skipImageFetch?: boolean;
 }
 
 interface MapPoint {
@@ -210,6 +212,8 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   onStopEscort,
   isStoppingEscort,
   onAutoAlignReady,
+  interactive = true,
+  skipImageFetch = false,
 }) => {
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -261,6 +265,12 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   );
 
   useEffect(() => {
+    // Nếu đã có sơ đồ vector /presentation hoặc đang chờ loadMapPackage thì không tải image.png thừa
+    if (hasPresentation || skipImageFetch) {
+      setIsLoadingImage(false);
+      return;
+    }
+
     let cancelled = false;
     setIsLoadingImage(true);
     setImageFailed(false);
@@ -314,7 +324,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [imageUrl, map.mapId, token]);
+  }, [hasPresentation, imageUrl, map.mapId, skipImageFetch, token]);
 
   const visibleEndpoints = useMemo(
     () =>
@@ -621,12 +631,15 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       : '#E5E7EB';
 
   return (
-    <View style={[styles.outerWrapper, { backgroundColor: mapBgColor }]}>
+    <View
+      style={[styles.outerWrapper, { backgroundColor: mapBgColor }]}
+      pointerEvents={interactive ? 'auto' : 'none'}
+    >
       {/* Banner chỉ dẫn điều hướng đặt gọn phía trên bản đồ để không che khuất phòng/tường */}
       {guidance && guidance.state !== 'IDLE' && (
         <NavigationGuidanceBanner
           guidance={guidance}
-          onStop={onStopEscort}
+          onStop={interactive ? onStopEscort : undefined}
           isStopping={isStoppingEscort}
         />
       )}
@@ -654,7 +667,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             >
               {!hasPresentation && <View style={styles.gridBackground} />}
 
-        {!hasPresentation && !imageFailed && (
+        {!hasPresentation && !skipImageFetch && !imageFailed && (
           <Image
             source={mapImageSource}
             resizeMode="stretch"
@@ -876,7 +889,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
                     <G
                       key={feature.id || `pres-room-${idx}`}
                       onPress={
-                        matchEp && onSelectEndpoint
+                        interactive && matchEp && onSelectEndpoint
                           ? () => onSelectEndpoint(matchEp)
                           : undefined
                       }
@@ -1015,7 +1028,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
               <G
                 key={zone.zoneId || zone.zoneCode}
                 onPress={
-                  zoneEndpoint && onSelectEndpoint
+                  interactive && zoneEndpoint && onSelectEndpoint
                     ? () => onSelectEndpoint(zoneEndpoint)
                     : undefined
                 }
@@ -1268,15 +1281,19 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             return (
               <G
                 key={endpoint.endpointId || endpoint.endpointCode}
-                onPress={onSelectEndpoint ? () => onSelectEndpoint(endpoint) : undefined}
+                onPress={
+                  interactive && onSelectEndpoint ? () => onSelectEndpoint(endpoint) : undefined
+                }
               >
-                <Circle
-                  cx={point.x}
-                  cy={point.y}
-                  r={hitRadius}
-                  fill="rgba(0, 0, 0, 0.001)"
-                  stroke="none"
-                />
+                {interactive && onSelectEndpoint && (
+                  <Circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={hitRadius}
+                    fill="rgba(0, 0, 0, 0.001)"
+                    stroke="none"
+                  />
+                )}
                 {/* Nếu endpoint đang là đích đến của đường dẫn đỏ thì nhường chấm đỏ hiển thị rõ như ảnh mẫu */}
                 {!isRouteDestination && (
                   <G pointerEvents="none">
@@ -1390,7 +1407,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
         <View style={styles.legendRow}>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#0879EE' }]} />
-            <Text style={styles.legendLabel}>Robot đang dẫn đường</Text>
+            <Text style={styles.legendLabel}>Vị trí Robot</Text>
           </View>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#157347' }]} />
@@ -1402,7 +1419,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
           </View>
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#1877ED' }]} />
-            <Text style={styles.legendLabel}>Đường Nav2 dự kiến</Text>
+            <Text style={styles.legendLabel}>Đường chỉ đường</Text>
           </View>
         </View>
       </View>

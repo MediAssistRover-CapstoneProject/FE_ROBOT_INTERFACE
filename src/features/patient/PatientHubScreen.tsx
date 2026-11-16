@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
-  Alert,
+  AppState,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
-  ActivityIndicator,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -21,17 +21,11 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
-import { apiClient, robotApiService } from '../../services/api';
-import { generateUuid } from '../../services/api/config';
+import { apiClient } from '../../services/api';
 import {
   computeGuidance,
   NavigationGuidanceResult,
 } from '../navigation/navigationGuidance';
-import {
-  planFallbackCorridorPath,
-  planPathOnSlamGrid,
-  SlamAutoAlignResult,
-} from '../../components/map/slamMapAutoAlign';
 import {
   robotMapService,
   DEFAULT_HOSPITAL_MAP,
@@ -39,105 +33,86 @@ import {
   DEFAULT_HOSPITAL_ZONES,
   DEFAULT_HOSPITAL_ENDPOINTS,
   PresentationDocument,
+  RobotSnapshotSummary,
+  getAdaptivePollDelayMs,
+  POLL_INTERVAL_IDLE_MS,
 } from '../../services/api/robotMapService';
-import { ClinicDestination, DEFAULT_HOSPITAL_ROOMS, DEFAULT_MAP_ID } from './types';
-import { colors, radii, spacing, typography } from '../../theme';
+import { colors, radii, spacing } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 export function PatientHubScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
+
+  // Theo dõi trạng thái foreground của ứng dụng để tạm dừng poll khi xuống nền
+  const [isAppActive, setIsAppActive] = useState<boolean>(AppState.currentState === 'active');
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      setIsAppActive(nextState === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
 
   // Khóa cứng màn hình xoay ngang (Landscape HMI)
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
   }, []);
 
-  // 1. Dữ liệu Bản đồ Backend (Đồng bộ từ API /api/v1/maps & /endpoints)
+  // 1. Dữ liệu Bản đồ Backend (chỉ đọc từ /api/v1/maps & /endpoints)
   const [activeMap, setActiveMap] = useState<MapResponse>(DEFAULT_HOSPITAL_MAP);
   const [mapMetadata, setMapMetadata] = useState<Record<string, any>>(DEFAULT_MAP_METADATA);
   const [zones, setZones] = useState<ZoneDto[]>(DEFAULT_HOSPITAL_ZONES);
   const [endpoints, setEndpoints] = useState<EndpointResponse[]>(DEFAULT_HOSPITAL_ENDPOINTS);
-  const [presentationDoc, setPresentationDoc] = useState<PresentationDocument | null>(
-    null
-  );
+  const [presentationDoc, setPresentationDoc] = useState<PresentationDocument | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
-  const [autoAlign, setAutoAlign] = useState<SlamAutoAlignResult | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [sessionMapId, setSessionMapId] = useState<string | null>(null);
-  const [sessionState, setSessionState] = useState<string | null>(null);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const navigationInFlightRef = useRef<boolean>(false);
+  const [isMapLoaded, setIsMapLoaded] = useState<boolean>(false);
 
-  // 2. Tọa độ Robot AMR thời gian thực & điểm xuất phát chặng dẫn đường
-  const [routeOrigin, setRouteOrigin] = useState<MapPlanPoint>({
-    xM: 0.5745,
-    yM: 2.2425,
-  });
-  const [robotPose, setRobotPose] = useState<MapRobotPose | null>({
-    xM: 0.606,
-    yM: 2.873,
-    yawRad: 1.515,
-    fresh: true,
-    mapId: DEFAULT_HOSPITAL_MAP.mapId,
-  });
+  // 2. Vị trí Robot AMR từ Backend (chỉ hiển thị dữ liệu thật)
+  const [robotPose, setRobotPose] = useState<MapRobotPose | null>(null);
   const [isPoseLive, setIsPoseLive] = useState<boolean>(false);
-  const [robotStatus, setRobotStatus] = useState<string>('IDLE');
-  const [batteryPercent, setBatteryPercent] = useState<number>(85);
 
-  // 3. Lựa chọn điểm đến từ danh sách Endpoint API của Map
-  const [selectedRoomId, setSelectedRoomId] = useState<string>(
-    DEFAULT_HOSPITAL_ENDPOINTS[0]?.endpointId || 'b4730be6-6d2f-43ec-aae3-05b1b426fa64'
-  );
-
-  // 4. Trạng thái Dẫn đường (Escort) & Quỹ đạo Nav2
-  const [isEscorting, setIsEscorting] = useState<boolean>(false);
-  const [loadingEscort, setLoadingEscort] = useState<boolean>(false);
-  const [isStoppingEscort, setIsStoppingEscort] = useState<boolean>(false);
-  const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
-  const [escortStatus, setEscortStatus] = useState<string>('IDLE');
+  // 3. Lộ trình & Chỉ dẫn Nav2 thật từ Backend (chỉ vẽ khi server có lộ trình)
   const [liveNavPlan, setLiveNavPlan] = useState<MapPlanPoint[] | null>(null);
+  const [planEndpointId, setPlanEndpointId] = useState<string | null>(null);
+  const [planEndpointName, setPlanEndpointName] = useState<string | null>(null);
   const [backendGuidance, setBackendGuidance] = useState<NavigationGuidanceResult | null>(null);
 
-  // 5. Trợ lý giọng nói & Báo động SOS
-  const [isSendingVoice, setIsSendingVoice] = useState<boolean>(false);
-  const [voiceFeedback, setVoiceFeedback] = useState<string | null>(null);
-  const [isTriggeringSos] = useState<boolean>(false);
+  const pollInFlightRef = useRef<boolean>(false);
+  const initialDelayRef = useRef<number | null>(null);
 
-  // Chuyển đổi danh sách Endpoints từ API Map sang danh mục Điểm đến cho Bệnh nhân
-  const mapEndpoints = useMemo(() => {
-    const filtered = endpoints.filter(
-      (ep) => ep.active !== false && (!ep.mapId || ep.mapId === activeMap.mapId)
-    );
-    return filtered.length > 0 ? filtered : endpoints;
-  }, [endpoints, activeMap.mapId]);
+  const applySnapshotSummary = useCallback(
+    (snap: RobotSnapshotSummary, targetMapId: string) => {
+      if (snap.pose && (!snap.pose.mapId || snap.pose.mapId === targetMapId)) {
+        setRobotPose(snap.pose);
+        setIsPoseLive(Boolean(snap.isPoseLive));
+      } else {
+        if (snap.snapshotReachable) {
+          setRobotPose(null);
+        }
+        setIsPoseLive(false);
+      }
 
-  const destinations: ClinicDestination[] = useMemo(() => {
-    if (mapEndpoints.length === 0) return DEFAULT_HOSPITAL_ROOMS;
-    const rx = robotPose?.xM ?? 0.5745;
-    const ry = robotPose?.yM ?? 2.2425;
-    return mapEndpoints.map((ep, idx) => {
-      const distM = Math.hypot(Number(ep.xM) - rx, Number(ep.yM) - ry);
-      const distCm = Math.max(10, Math.round(distM * 100));
-      const etaSec = Math.max(2, Math.round(distM / 0.25));
-      return {
-        id: ep.endpointId || `ep-${idx}`,
-        name: ep.endpointName || ep.endpointCode,
-        category: 'clinic' as const,
-        department: 'Khoa Khám bệnh',
-        roomCode: ep.endpointCode || ep.endpointName || `P${idx + 1}`,
-        doctor: 'Bác sĩ trực chuyên khoa',
-        location: activeMap.mapName || 'Tầng 1',
-        eta: `${etaSec} giây`,
-        distance: `${distCm} cm`,
-        status: 'Sẵn sàng đón tiếp',
-        xPercent: 50,
-        yPercent: 50,
-      };
-    });
-  }, [mapEndpoints, robotPose?.xM, robotPose?.yM, activeMap.mapName]);
+      if (snap.navigationPlan && snap.navigationPlan.length >= 2) {
+        setLiveNavPlan(snap.navigationPlan);
+        setPlanEndpointId(snap.planEndpointId ?? null);
+        setPlanEndpointName(snap.planEndpointName ?? null);
+      } else {
+        setLiveNavPlan(null);
+        setPlanEndpointId(null);
+        setPlanEndpointName(null);
+      }
 
-  // Tải dữ liệu Map và khởi tạo kết nối Backend
+      if (snap.backendGuidance && snap.backendGuidance.state !== 'IDLE') {
+        setBackendGuidance(snap.backendGuidance);
+      } else {
+        setBackendGuidance(null);
+      }
+    },
+    []
+  );
+
+  // Tải gói dữ liệu Bản đồ lúc khởi tạo (tái sử dụng snapshot ban đầu, tránh gọi trùng)
   useEffect(() => {
     let alive = true;
 
@@ -151,40 +126,21 @@ export function PatientHubScreen({ navigation }: Props) {
         setEndpoints(pkg.endpoints);
         setPresentationDoc(pkg.presentation ?? null);
         setAuthToken(pkg.token);
-
-        const activeEps = pkg.endpoints.filter(
-          (ep) => ep.active !== false && (!ep.mapId || ep.mapId === pkg.activeMap.mapId)
-        );
-        if (activeEps.length > 0) {
-          const letanEp =
-            activeEps.find((ep) => ep.endpointCode.toLowerCase() === 'letan') || activeEps[0];
-          const phong01Ep =
-            activeEps.find((ep) => ep.endpointCode.toLowerCase() === 'phong01') || activeEps[1];
-          if (letanEp && letanEp.endpointId) {
-            setSelectedRoomId(letanEp.endpointId);
-          }
-          if (phong01Ep && letanEp) {
-            const p01x = Number(phong01Ep.xM) || 0.5745;
-            const p01y = Number(phong01Ep.yM) || 2.2425;
-            const ltx = Number(letanEp.xM) || 0.6245;
-            const lty = Number(letanEp.yM) || 3.1425;
-            setRouteOrigin({ xM: p01x, yM: p01y });
-            // Đặt vị trí khởi tạo của robot trên hành lang từ phong01 hướng về lễ tân (còn ~27 cm)
-            const dx = ltx - p01x;
-            const dy = lty - p01y;
-            const len = Math.hypot(dx, dy) || 1;
-            const remM = Math.min(0.27, len * 0.5);
-            setRobotPose({
-              xM: ltx - (dx / len) * remM,
-              yM: lty - (dy / len) * remM,
-              yawRad: Math.atan2(dy, dx),
-              fresh: true,
-              mapId: pkg.activeMap.mapId,
-            });
-          }
+        if (pkg.initialSnapshot) {
+          applySnapshotSummary(pkg.initialSnapshot, pkg.activeMap.mapId);
+          const hasActivity = Boolean(
+            pkg.initialSnapshot.activeJobId ||
+              pkg.initialSnapshot.navigationPlan?.length ||
+              pkg.initialSnapshot.status !== 'IDLE'
+          );
+          initialDelayRef.current = hasActivity ? 200 : POLL_INTERVAL_IDLE_MS;
         }
       } catch (err) {
         console.warn('Lỗi khi tải map backend:', err);
+      } finally {
+        if (alive) {
+          setIsMapLoaded(true);
+        }
       }
     }
 
@@ -192,496 +148,104 @@ export function PatientHubScreen({ navigation }: Props) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [applySnapshotSummary]);
 
-  // Polling telemetry robot và quỹ đạo Nav2 mỗi 1 giây
+  // Poll thông minh theo chu kỳ setTimeout nối tiếp (2.5s khi chạy, 8s khi IDLE),
+  // chỉ chạy khi app active + màn hình Map đang focus, có in-flight lock chống gọi trùng
   useEffect(() => {
-    let alive = true;
+    if (!isMapLoaded || !isFocused || !isAppActive) {
+      return;
+    }
 
-    const pollTelemetry = async () => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNext = (delayMs: number) => {
+      if (cancelled) return;
+      timer = setTimeout(() => {
+        void runPoll();
+      }, delayMs);
+    };
+
+    const runPoll = async () => {
+      if (cancelled || pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      let nextDelayMs = POLL_INTERVAL_IDLE_MS;
       try {
         const snap = await robotMapService.loadRobotSnapshot();
-        if (!alive) return;
-        if (snap.sessionId) {
-          setSessionId(snap.sessionId);
-        }
-        setSessionMapId(snap.sessionMapId ?? null);
-        setSessionState(snap.sessionState ?? null);
-        setActiveJobId(snap.activeJobId ?? null);
-        // Chỉ ghi đè robotPose từ telemetry nếu dữ liệu là live và khớp với map đang hiển thị
-        if (
-          snap.pose &&
-          snap.isPoseLive &&
-          (!snap.pose.mapId || snap.pose.mapId === activeMap.mapId)
-        ) {
-          setRobotPose(snap.pose);
-          setIsPoseLive(true);
-        } else {
-          setIsPoseLive(false);
-        }
-        setRobotStatus(snap.status);
-        if (snap.batteryRaw) {
-          const pct = Math.min(100, Math.max(10, Math.round(snap.batteryRaw / 100)));
-          setBatteryPercent(pct);
-        }
-        if (snap.navigationPlan && snap.navigationPlan.length >= 2) {
-          setLiveNavPlan(snap.navigationPlan);
-          if (snap.planEndpointId) {
-            setSelectedRoomId(snap.planEndpointId);
-          }
-        } else if (snap.status === 'IDLE' && !isEscorting) {
-          setLiveNavPlan(null);
-        }
-        if (snap.backendGuidance && snap.backendGuidance.state !== 'IDLE') {
-          setBackendGuidance(snap.backendGuidance);
-        } else {
-          setBackendGuidance(null);
-        }
-      } catch {}
+        if (cancelled) return;
+        applySnapshotSummary(snap, activeMap.mapId);
+        nextDelayMs = getAdaptivePollDelayMs(snap);
+      } catch {
+        nextDelayMs = POLL_INTERVAL_IDLE_MS;
+      } finally {
+        pollInFlightRef.current = false;
+        scheduleNext(nextDelayMs);
+      }
     };
 
-    pollTelemetry();
-    const timer = setInterval(pollTelemetry, 1000);
+    if (initialDelayRef.current !== null) {
+      const delay = initialDelayRef.current;
+      initialDelayRef.current = null;
+      scheduleNext(delay);
+    } else {
+      void runPoll();
+    }
 
     return () => {
-      alive = false;
-      clearInterval(timer);
+      cancelled = true;
+      if (timer) clearTimeout(timer);
     };
-  }, [activeMap.mapId, isEscorting]);
+  }, [activeMap.mapId, applySnapshotSummary, isAppActive, isFocused, isMapLoaded]);
 
-  const fallbackRoom = destinations[0] || (DEFAULT_HOSPITAL_ROOMS[0] as ClinicDestination);
-  const selectedRoom: ClinicDestination =
-    destinations.find(
-      (d) =>
-        d.id === selectedRoomId ||
-        d.roomCode.toLowerCase() === selectedRoomId.toLowerCase()
-    ) || fallbackRoom;
-
-  const selectedEndpoint: EndpointResponse | undefined = useMemo(() => {
-    return (
-      mapEndpoints.find(
-        (ep) =>
-          ep.endpointId === selectedRoom.id ||
-          ep.endpointCode.toLowerCase() === selectedRoom.roomCode.toLowerCase()
-      ) || mapEndpoints[0]
+  const mapEndpoints = useMemo(() => {
+    const filtered = endpoints.filter(
+      (ep) => ep.active !== false && (!ep.mapId || ep.mapId === activeMap.mapId),
     );
-  }, [mapEndpoints, selectedRoom.id, selectedRoom.roomCode]);
+    return filtered.length > 0 ? filtered : endpoints;
+  }, [endpoints, activeMap.mapId]);
 
-  // Quỹ đạo dẫn đường trên bản đồ: ưu tiên liveNavPlan từ Nav2, hoặc tính toán trên lưới SLAM của map API
+  const activeDestinationEndpoint = useMemo(() => {
+    if (!planEndpointId && !planEndpointName) return undefined;
+    return mapEndpoints.find(
+      (ep) =>
+        (planEndpointId &&
+          (ep.endpointId === planEndpointId ||
+            ep.endpointCode.toLowerCase() === planEndpointId.toLowerCase())) ||
+        (planEndpointName &&
+          (ep.endpointName || '').toLowerCase() === planEndpointName.toLowerCase()),
+    );
+  }, [mapEndpoints, planEndpointId, planEndpointName]);
+
+  const activeDestinationLabel =
+    planEndpointName ||
+    activeDestinationEndpoint?.endpointName ||
+    activeDestinationEndpoint?.endpointCode ||
+    'Điểm đến';
+
+  // Chỉ vẽ path thật khi Backend có navigationPlan (>= 2 điểm)
   const plannedPath: MapPlanPoint[] | null = useMemo(() => {
-    if (liveNavPlan && liveNavPlan.length >= 2) {
-      return liveNavPlan;
-    }
-    if (!selectedEndpoint) return null;
+    return liveNavPlan && liveNavPlan.length >= 2 ? liveNavPlan : null;
+  }, [liveNavPlan]);
 
-    const targetPt: MapPlanPoint = {
-      xM: Number(selectedEndpoint.xM),
-      yM: Number(selectedEndpoint.yM),
-    };
-    const startPt: MapPlanPoint = routeOrigin || {
-      xM: robotPose?.xM ?? 0.5745,
-      yM: robotPose?.yM ?? 2.2425,
-    };
-
-    const resolution =
-      Number(
-        mapMetadata?.resolution_m_per_pixel ??
-          mapMetadata?.resolutionMPerPixel ??
-          mapMetadata?.resolution ??
-          activeMap.resolutionMPerPixel
-      ) || 0.05;
-    const origin = Array.isArray(mapMetadata?.origin) ? mapMetadata.origin : [];
-    const originX =
-      Number(
-        mapMetadata?.origin_x_m ??
-          mapMetadata?.originXM ??
-          mapMetadata?.originX ??
-          origin[0] ??
-          activeMap.originXM
-      ) || 0;
-    const originY =
-      Number(
-        mapMetadata?.origin_y_m ??
-          mapMetadata?.originYM ??
-          mapMetadata?.originY ??
-          origin[1] ??
-          activeMap.originYM
-      ) || 0;
-    const originYaw =
-      Number(
-        mapMetadata?.origin_yaw_rad ??
-          mapMetadata?.originYawRad ??
-          mapMetadata?.originYaw ??
-          origin[2] ??
-          activeMap.originYawRad
-      ) || 0;
-
-    if (autoAlign) {
-      const slamRoute = planPathOnSlamGrid(
-        autoAlign,
-        {
-          widthPx: autoAlign.width,
-          heightPx: autoAlign.height,
-          resolution,
-          originX,
-          originY,
-          originYaw,
-        },
-        startPt,
-        targetPt
-      );
-      if (slamRoute && slamRoute.length >= 2) {
-        return slamRoute;
-      }
-    }
-
-    return planFallbackCorridorPath(startPt, targetPt);
-  }, [liveNavPlan, selectedEndpoint, routeOrigin, robotPose?.xM, robotPose?.yM, mapMetadata, activeMap, autoAlign]);
-
-  // Realtime Navigation Guidance (hiển thị banner chỉ dẫn màu xanh trên bản đồ như ảnh mẫu)
+  // Chỉ hiện banner hướng dẫn khi Backend có chỉ dẫn active hoặc có lộ trình thật
   const guidance: NavigationGuidanceResult | null = useMemo(() => {
-    if (backendGuidance && isPoseLive && backendGuidance.state !== 'IDLE') {
+    if (backendGuidance && backendGuidance.state !== 'IDLE') {
       return backendGuidance;
     }
-    if (!plannedPath || plannedPath.length < 2) return null;
+    if (!plannedPath || plannedPath.length < 2) {
+      return null;
+    }
     return computeGuidance({
       planPoints: plannedPath,
       robotPose,
-      destinationName: selectedEndpoint?.endpointName || selectedRoom.name,
+      destinationName: activeDestinationLabel,
       speedMps: 0.25,
       preferCm: true,
     });
-  }, [backendGuidance, isPoseLive, plannedPath, robotPose, selectedEndpoint, selectedRoom.name]);
+  }, [backendGuidance, plannedPath, robotPose, activeDestinationLabel]);
 
-  // Chuyển động dẫn đường mượt dọc theo quỹ đạo plannedPath khi người dùng bấm "Bắt đầu Dẫn đường"
-  useEffect(() => {
-    if (!isEscorting || isPoseLive || !plannedPath || plannedPath.length < 2) return;
-
-    const stepMeters = 0.045; // ~0.18 m/s mỗi 250ms
-    const timer = setInterval(() => {
-      setRobotPose((prev) => {
-        if (!prev) return prev;
-        const lastPt = plannedPath[plannedPath.length - 1];
-        if (!lastPt) return prev;
-
-        const g = computeGuidance({
-          planPoints: plannedPath,
-          robotPose: prev,
-          destinationName: selectedEndpoint?.endpointName || selectedRoom.name,
-          speedMps: 0.25,
-          preferCm: true,
-        });
-
-        if (g.state === 'ARRIVED' || (typeof g.remainingCm === 'number' && g.remainingCm <= 14)) {
-          setIsEscorting(false);
-          setEscortStatus('COMPLETED');
-          setVoiceFeedback(`Đã đến ${selectedEndpoint?.endpointName || selectedRoom.name}!`);
-          return {
-            ...prev,
-            xM: lastPt.xM,
-            yM: lastPt.yM,
-            fresh: true,
-          };
-        }
-
-        const segIdx = typeof g.segmentIndex === 'number' ? g.segmentIndex : 0;
-        const projX = g.projection ? g.projection.xM : prev.xM;
-        const projY = g.projection ? g.projection.yM : prev.yM;
-
-        let remStep = stepMeters;
-        let curX = projX;
-        let curY = projY;
-        let curYaw = prev.yawRad;
-
-        for (let i = segIdx + 1; i < plannedPath.length; i += 1) {
-          const target = plannedPath[i]!;
-          const dx = target.xM - curX;
-          const dy = target.yM - curY;
-          const segDist = Math.hypot(dx, dy);
-          if (segDist <= 1e-5) continue;
-
-          curYaw = Math.atan2(dy, dx);
-          if (segDist >= remStep) {
-            curX += (dx / segDist) * remStep;
-            curY += (dy / segDist) * remStep;
-            break;
-          } else {
-            curX = target.xM;
-            curY = target.yM;
-            remStep -= segDist;
-          }
-        }
-
-        return {
-          ...prev,
-          xM: curX,
-          yM: curY,
-          yawRad: curYaw,
-          fresh: true,
-        };
-      });
-    }, 250);
-
-    return () => clearInterval(timer);
-  }, [isEscorting, isPoseLive, plannedPath, selectedEndpoint, selectedRoom.name]);
-
-  // Polling theo dõi trạng thái yêu cầu dẫn đường thật từ GET /api/v1/pi/requests/{requestId}
-  useEffect(() => {
-    if (!activeRequestId || !isEscorting) return;
-
-    const pollTimer = setInterval(async () => {
-      try {
-        const detail = await robotApiService.getRequestDetail(activeRequestId);
-        if (detail?.status) {
-          setEscortStatus(detail.status);
-          if (detail.status === 'COMPLETED') {
-            clearInterval(pollTimer);
-            setIsEscorting(false);
-            setActiveRequestId(null);
-            Alert.alert(
-              'Đã đến nơi an toàn!',
-              `Robot đã dẫn bạn đến trước cửa ${selectedRoom.name} (${selectedRoom.roomCode}). Chúc bạn khám bệnh thuận lợi!`
-            );
-          } else if (detail.status === 'CANCELLED' || detail.status === 'FAILED') {
-            clearInterval(pollTimer);
-            setIsEscorting(false);
-            setActiveRequestId(null);
-          }
-        }
-      } catch {}
-    }, 2000);
-
-    return () => {
-      clearInterval(pollTimer);
-    };
-  }, [activeRequestId, isEscorting, selectedRoom]);
-
-  // Hàm chọn điểm đến & chuẩn bị lộ trình chỉ đường trên bản đồ
-  const selectDestinationEndpoint = (ep: EndpointResponse) => {
-    setSelectedRoomId(ep.endpointId || ep.endpointCode);
-    const phong01Ep =
-      mapEndpoints.find((item) => item.endpointCode.toLowerCase() === 'phong01') ||
-      mapEndpoints[1] ||
-      mapEndpoints[0];
-
-    const epX = Number(ep.xM) || 0;
-    const epY = Number(ep.yM) || 0;
-    const curX = robotPose?.xM ?? 0.5745;
-    const curY = robotPose?.yM ?? 2.2425;
-    const distToTarget = Math.hypot(epX - curX, epY - curY);
-
-    // Nếu robot đang đứng trùng hoặc quá sát điểm đến được chọn, đặt điểm xuất phát tại phong01 (hoặc lễ tân) để vẽ rõ lộ trình dẫn đường
-    if (distToTarget < 0.25 && phong01Ep) {
-      const p01x = Number(phong01Ep.xM) || 0.5745;
-      const p01y = Number(phong01Ep.yM) || 2.2425;
-      const altOrigin: MapPlanPoint =
-        Math.hypot(epX - p01x, epY - p01y) > 0.25
-          ? { xM: p01x, yM: p01y }
-          : { xM: 0.6245, yM: 3.1425 };
-      const dx = epX - altOrigin.xM;
-      const dy = epY - altOrigin.yM;
-      setRouteOrigin(altOrigin);
-      if (!isPoseLive) {
-        setRobotPose({
-          xM: altOrigin.xM,
-          yM: altOrigin.yM,
-          yawRad: Math.atan2(dy, dx),
-          fresh: true,
-          mapId: activeMap.mapId,
-        });
-      }
-    } else {
-      const originPt: MapPlanPoint = { xM: curX, yM: curY };
-      setRouteOrigin(originPt);
-      if (!isPoseLive) {
-        const dx = epX - curX;
-        const dy = epY - curY;
-        setRobotPose((prev) =>
-          prev
-            ? {
-                ...prev,
-                yawRad: Math.atan2(dy, dx),
-                fresh: true,
-              }
-            : prev
-        );
-      }
-    }
-    setVoiceFeedback(`Đã chọn chỉ đường đến: ${ep.endpointName || ep.endpointCode}`);
-  };
-
-  // Khởi tạo 1 job dẫn đường trong workflow NAVIGATION có sẵn (chỉ chạy khi robot IDLE & không có job đè)
-  const startNavigationToEndpoint = async (targetEp?: EndpointResponse) => {
-    if (!targetEp) return;
-
-    selectDestinationEndpoint(targetEp);
-
-    if (navigationInFlightRef.current) {
-      return;
-    }
-    if (isEscorting || activeRequestId) {
-      setVoiceFeedback(
-        `Robot đang thực hiện lộ trình (${escortStatus}). Vui lòng bấm Dừng trước khi chọn điểm đến mới.`
-      );
-      return;
-    }
-
-    navigationInFlightRef.current = true;
-    setLoadingEscort(true);
-
-    const targetName = targetEp.endpointName || targetEp.endpointCode || selectedRoom.name;
-    const destinationEndpointId = targetEp.endpointId;
-    const targetMapId = activeMap.mapId || DEFAULT_MAP_ID;
-
-    try {
-      // 1. Kiểm tra trạng thái sẵn sàng (IDLE + chưa có job đang chạy) từ snapshot mới nhất
-      const freshSnap = await robotMapService.loadRobotSnapshot();
-      setRobotStatus(freshSnap.status);
-      setActiveJobId(freshSnap.activeJobId ?? null);
-      if (freshSnap.sessionId) setSessionId(freshSnap.sessionId);
-      setSessionMapId(freshSnap.sessionMapId ?? null);
-      setSessionState(freshSnap.sessionState ?? null);
-
-      if (freshSnap.snapshotReachable && freshSnap.status !== 'IDLE') {
-        setVoiceFeedback(
-          `Robot đang ${freshSnap.status}, cần ở trạng thái IDLE sẵn sàng mới bắt đầu dẫn đường.`
-        );
-        return;
-      }
-
-      if (freshSnap.activeJobId) {
-        setVoiceFeedback(
-          'Robot đang có job hoạt động trên hệ thống, chưa thể nhận thêm lệnh dẫn đường.'
-        );
-        return;
-      }
-
-      if (!destinationEndpointId) {
-        setVoiceFeedback('Endpoint này chưa có ID hợp lệ từ bản đồ Backend.');
-        return;
-      }
-
-      // 2. Lấy workflow NAVIGATION đã publish sẵn trên BE (không tạo workflow mới)
-      const existingWorkflowId = await robotApiService.resolveNavigationWorkflowId('NAVIGATION');
-      const resolvedSessionId = freshSnap.sessionId || sessionId;
-      const useSessionId =
-        resolvedSessionId &&
-        freshSnap.sessionState === 'READY' &&
-        freshSnap.sessionMapId === targetMapId
-          ? resolvedSessionId
-          : undefined;
-
-      // 3. Tạo đúng 1 Job dẫn đường qua POST /api/v1/pi/requests/navigation
-      const reqKey = generateUuid();
-      const navRes = await robotApiService.requestNavigation(
-        {
-          mapId: targetMapId,
-          workflowId: existingWorkflowId,
-          destinationEndpointId,
-          targetMode: 'ENDPOINT',
-          navigationMode: 'STANDARD',
-          passengerCount: 1,
-          priority: 80,
-          navigationSessionId: useSessionId,
-          note: `Bệnh nhân chọn dẫn đường đến ${targetName}`,
-        },
-        reqKey,
-      );
-
-      const serviceRequestId = navRes?.request?.serviceRequestId;
-      if (serviceRequestId) {
-        setActiveRequestId(serviceRequestId);
-        setIsEscorting(true);
-        setEscortStatus(navRes.request?.status || 'QUEUED');
-        setVoiceFeedback(`Robot đã nhận lệnh dẫn đường đến ${targetName}.`);
-        await robotApiService
-          .sendHeartbeat('BUSY', batteryPercent * 100, targetMapId)
-          .catch(() => {});
-        return;
-      }
-
-      setVoiceFeedback(`Đã gửi yêu cầu dẫn đường đến ${targetName}.`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      // Nếu server kết nối được nhưng từ chối do conflict/not IDLE/workflow, tuyệt đối không chạy đè
-      const isServerRejection =
-        /409|400|403|401|idle|conflict|active|workflow|session|job/i.test(msg);
-
-      if (isServerRejection) {
-        setVoiceFeedback(msg || 'Không thể bắt đầu dẫn đường vì robot chưa sẵn sàng.');
-        return;
-      }
-
-      // Chỉ mô phỏng dẫn đường cục bộ khi tablet không kết nối được máy chủ/robot vật lý
-      if (!isPoseLive && robotPose) {
-        const tx = Number(targetEp.xM) || 0;
-        const ty = Number(targetEp.yM) || 0;
-        if (Math.hypot(tx - robotPose.xM, ty - robotPose.yM) <= 0.35) {
-          const startPt = routeOrigin || { xM: 0.5745, yM: 2.2425 };
-          const firstNext =
-            plannedPath && plannedPath.length >= 2
-              ? plannedPath[1]!
-              : { xM: tx, yM: ty };
-          setRobotPose({
-            xM: startPt.xM,
-            yM: startPt.yM,
-            yawRad: Math.atan2(firstNext.yM - startPt.yM, firstNext.xM - startPt.xM),
-            fresh: true,
-            mapId: activeMap.mapId,
-          });
-        }
-      }
-      setIsEscorting(true);
-      setEscortStatus('OFFLINE_PREVIEW');
-      setVoiceFeedback(`Đang dẫn đường mô phỏng đến ${targetName} (chưa kết nối BE/robot).`);
-    } finally {
-      navigationInFlightRef.current = false;
-      setLoadingEscort(false);
-    }
-  };
-
-  // Bấm nút "Bắt đầu Dẫn đường" trên bảng điều khiển phải
-  const handleRequestEscort = () => {
-    void startNavigationToEndpoint(selectedEndpoint || mapEndpoints[0]);
-  };
-
-  // Dừng dẫn đường qua POST /api/v1/pi/requests/{requestId}/cancel
-  const handleCancelEscort = async () => {
-    if (!activeRequestId) {
-      setIsEscorting(false);
-      setEscortStatus('IDLE');
-      setVoiceFeedback(null);
-      return;
-    }
-    setIsStoppingEscort(true);
-    try {
-      await robotApiService.cancelRequest(activeRequestId, 'Bệnh nhân dừng yêu cầu');
-      await robotApiService.sendHeartbeat('IDLE', batteryPercent * 100, activeMap.mapId).catch(() => {});
-    } catch {
-      // Handled
-    } finally {
-      setIsStoppingEscort(false);
-      setIsEscorting(false);
-      setEscortStatus('IDLE');
-      setActiveRequestId(null);
-      setVoiceFeedback(null);
-    }
-  };
-
-  // Bấm nút Hỏi Trợ lý
-  const handleVoicePress = async () => {
-    setIsSendingVoice(true);
-    setVoiceFeedback('Trợ lý: "Tôi có thể giúp bạn tìm phòng khám nào hôm nay?"');
-
-    try {
-      await robotApiService.sendVoiceCommand('Chỉ đường đến ' + selectedRoom.name);
-    } catch {} finally {
-      setIsSendingVoice(false);
-      navigation.navigate('Assistant');
-    }
-  };
-
-  // Bấm nút Cấp cứu khẩn cấp (SOS): Điều hướng sang màn hình Emergency
+  // Nút duy nhất cho phép thao tác trên màn hình: Cấp cứu SOS
   const handleEmergencySos = () => {
     const hasValidCoords =
       robotPose &&
@@ -690,27 +254,28 @@ export function PatientHubScreen({ navigation }: Props) {
       typeof robotPose.yM === 'number' &&
       !isNaN(robotPose.yM);
 
+    const hasActiveDestination = Boolean(plannedPath || (guidance && guidance.state !== 'IDLE'));
+    const roomCode = hasActiveDestination ? activeDestinationEndpoint?.endpointCode : undefined;
+    const roomName = hasActiveDestination ? activeDestinationLabel : undefined;
+
     console.log('[SOS] Tap nút CẤP CỨU SOS -> mở Emergency', {
       baseUrl: apiClient.getBaseUrl(),
       mapId: hasValidCoords && activeMap?.mapId ? activeMap.mapId : undefined,
       hasValidCoords,
-      roomCode: selectedRoom?.roomCode,
+      roomCode,
     });
 
     navigation.navigate('Emergency', {
       mapId: hasValidCoords && activeMap?.mapId ? activeMap.mapId : undefined,
       xM: hasValidCoords ? robotPose.xM : undefined,
       yM: hasValidCoords ? robotPose.yM : undefined,
-      roomCode: selectedRoom?.roomCode,
-      roomName: selectedRoom?.name,
-      destinationName: selectedRoom?.name,
+      roomCode,
+      roomName,
+      destinationName: roomName,
     });
   };
 
-  // Khi bấm trực tiếp vào một Endpoint trên bản đồ: kiểm tra robot IDLE và tạo job trong workflow có sẵn
-  const handleSelectEndpoint = (ep: EndpointResponse) => {
-    void startNavigationToEndpoint(ep);
-  };
+  const hasActiveRoute = Boolean(plannedPath || (guidance && guidance.state !== 'IDLE'));
 
   return (
     <View
@@ -725,242 +290,107 @@ export function PatientHubScreen({ navigation }: Props) {
       ]}
     >
       {/* ======================================================== */}
-      {/* CỘT TRÁI (2/3 CHIỀU NGANG): BẢN ĐỒ SLAM ROBOT CHUẨN      */}
+      {/* CỘT TRÁI: BẢN ĐỒ CHỈ XEM VỊ TRÍ ROBOT & PATH CHỈ ĐƯỜNG    */}
       {/* ======================================================== */}
       <View style={styles.landscapeMapColumn}>
-        {/* Khung Bản đồ Card Trắng */}
         <View style={styles.mapCard}>
           <BackendHospitalMap
+            interactive={false}
+            skipImageFetch={!isMapLoaded}
             map={activeMap}
             metadata={mapMetadata}
             endpoints={endpoints}
             zones={zones}
             presentation={presentationDoc}
             token={authToken}
-            selectedEndpointId={selectedRoom.id}
-            onSelectEndpoint={handleSelectEndpoint}
+            selectedEndpointId={hasActiveRoute ? planEndpointId : null}
             robotPose={robotPose}
             isPoseLive={isPoseLive}
             plannedPath={plannedPath}
             guidance={guidance}
-            onStopEscort={handleCancelEscort}
-            isStoppingEscort={isStoppingEscort}
-            onAutoAlignReady={setAutoAlign}
           />
         </View>
       </View>
 
       {/* ======================================================== */}
-      {/* CỘT PHẢI (1/3 CHIỀU NGANG): BẢNG THAO TÁC BỆNH NHÂN       */}
+      {/* CỘT PHẢI: NÚT CẤP CỨU SOS & THÔNG TIN CHỈ ĐỌC             */}
       {/* ======================================================== */}
       <View style={styles.landscapeControlColumn}>
+        {/* Nút bấm duy nhất trên màn hình: CẤP CỨU SOS */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cấp cứu SOS gọi điều dưỡng khẩn cấp"
+          onPress={handleEmergencySos}
+          style={({ pressed }) => [
+            styles.sosButton,
+            pressed && styles.sosButtonPressed,
+          ]}
+        >
+          <View style={styles.sosIconCircle}>
+            <Ionicons name="alert-circle" size={26} color={colors.danger} />
+          </View>
+          <View style={styles.actionTextCol}>
+            <AppText style={styles.sosTitle}>CẤP CỨU SOS</AppText>
+            <AppText style={styles.sosSubtitle}>Gọi Điều dưỡng ngay</AppText>
+          </View>
+        </Pressable>
+
+        {/* Bảng lộ trình chỉ đọc (không có thao tác chạm) */}
         <ScrollView
-          style={styles.controlScroll}
-          contentContainerStyle={styles.controlScrollContent}
+          style={styles.infoScroll}
+          contentContainerStyle={styles.infoScrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* CẶP NÚT HÀNH ĐỘNG NỔI BẬT: SOS & HỎI TRỢ LÝ */}
-          <View style={styles.actionButtonsRow}>
-            {/* NÚT CẤP CỨU SOS (ĐỎ NỔI BẬT, MINHEIGHT 56DP) */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Cấp cứu SOS gọi điều dưỡng khẩn cấp"
-              onPress={handleEmergencySos}
-              disabled={isTriggeringSos}
-              style={({ pressed }) => [
-                styles.sosButton,
-                pressed && styles.sosButtonPressed,
-              ]}
-            >
-              <View style={styles.sosIconCircle}>
-                {isTriggeringSos ? (
-                  <ActivityIndicator size="small" color={colors.danger} />
-                ) : (
-                  <Ionicons name="alert-circle" size={24} color={colors.danger} />
-                )}
-              </View>
-              <View style={styles.actionTextCol}>
-                <AppText style={styles.sosTitle}>CẤP CỨU SOS</AppText>
-                <AppText style={styles.sosSubtitle}>Gọi Điều dưỡng ngay</AppText>
-              </View>
-            </Pressable>
-
-            {/* NÚT HỎI TRỢ LÝ */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Hỏi trợ lý bệnh viện tìm phòng khám"
-              onPress={handleVoicePress}
-              disabled={isSendingVoice}
-              style={({ pressed }) => [
-                styles.assistantButton,
-                pressed && styles.assistantButtonPressed,
-              ]}
-            >
-              <View style={styles.assistantIconCircle}>
-                {isSendingVoice ? (
-                  <ActivityIndicator size="small" color={colors.textPrimary} />
-                ) : (
-                  <Ionicons name="chatbubbles" size={20} color={colors.textPrimary} />
-                )}
-              </View>
-              <View style={styles.actionTextCol}>
-                <AppText style={styles.assistantTitle}>Hỏi Trợ lý</AppText>
-                <AppText style={styles.assistantSubtitle}>Tìm phòng khám & thông tin</AppText>
-              </View>
-            </Pressable>
-          </View>
-
-          {/* 3. CARD ĐIỂM ĐẾN & NÚT BẮT ĐẦU DẪN ĐƯỜNG (CTA CHÍNH MÀU ĐEN THAN) */}
-          <View style={styles.destinationCard}>
+          {/* Lộ trình & Chỉ dẫn hiện tại (chỉ đọc từ Backend) */}
+          <View style={styles.infoCard}>
             <View style={styles.cardHeaderRow}>
               <View style={styles.sectionIconSquare}>
-                <Ionicons name="location" size={16} color={colors.textInverse} />
+                <Ionicons name="trail-sign" size={15} color={colors.textInverse} />
               </View>
-              <AppText variant="caption" style={[styles.cardHeaderTitle, { flex: 1 }]}>
-                ĐIỂM ĐẾN ĐÃ CHỌN
-              </AppText>
-              <AppText
-                variant="caption"
-                style={{
-                  fontWeight: '700',
-                  color:
-                    robotStatus === 'IDLE' && !activeJobId
-                      ? '#157347'
-                      : '#B45309',
-                }}
-              >
-                {robotStatus === 'IDLE' && !activeJobId
-                  ? 'IDLE · Sẵn sàng'
-                  : activeJobId
-                  ? `${robotStatus} · Có job`
-                  : robotStatus}
+              <AppText variant="caption" style={styles.cardHeaderTitle}>
+                LỘ TRÌNH CHỈ ĐƯỜNG
               </AppText>
             </View>
 
-            {/* Banner phản hồi (nếu có) */}
-            {voiceFeedback ? (
-              <View style={styles.feedbackBanner}>
-                <Ionicons name="sparkles" size={14} color={colors.warningText} />
-                <AppText variant="caption" style={styles.feedbackBannerText}>
-                  {voiceFeedback}
-                </AppText>
-              </View>
-            ) : null}
-
-            {/* Thông tin phòng khám */}
-            <View style={styles.roomDetailBox}>
-              <View style={styles.roomCodePill}>
-                <AppText style={styles.roomCodePillText}>{selectedRoom.roomCode}</AppText>
-              </View>
-              <View style={{ flex: 1 }}>
-                <AppText variant="heading" style={styles.roomNameText}>
-                  {selectedRoom.name}
-                </AppText>
-                <AppText variant="caption" style={styles.roomSubDetailText}>
-                  {selectedRoom.location} • {selectedRoom.distance} • ~{selectedRoom.eta}
-                </AppText>
-              </View>
-            </View>
-
-            {/* CTA Dẫn đường: Màu đen than #202022 (Ảnh mẫu hero CTA) */}
-            {isEscorting ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Dừng dẫn đường"
-                onPress={handleCancelEscort}
-                disabled={isStoppingEscort}
-                style={({ pressed }) => [
-                  styles.stopEscortBtn,
-                  pressed && { opacity: 0.85 },
-                  isStoppingEscort && { opacity: 0.6 },
-                ]}
-              >
-                {isStoppingEscort ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="stop-circle" size={22} color="#FFFFFF" />
-                    <AppText style={styles.escortBtnText}>
-                      Dừng dẫn đường ({escortStatus})
+            {hasActiveRoute ? (
+              <View style={styles.routeActiveBox}>
+                <View style={styles.roomDetailBox}>
+                  {activeDestinationEndpoint?.endpointCode ? (
+                    <View style={styles.roomCodePill}>
+                      <AppText style={styles.roomCodePillText}>
+                        {activeDestinationEndpoint.endpointCode}
+                      </AppText>
+                    </View>
+                  ) : null}
+                  <View style={{ flex: 1 }}>
+                    <AppText variant="heading" style={styles.roomNameText} numberOfLines={2}>
+                      {activeDestinationLabel}
                     </AppText>
-                  </>
-                )}
-              </Pressable>
+                  </View>
+                </View>
+
+                {guidance ? (
+                  <View style={styles.guidancePreviewBox}>
+                    <AppText style={styles.guidancePrimaryText}>{guidance.primaryText}</AppText>
+                    {guidance.secondaryText ? (
+                      <AppText variant="caption" style={styles.guidanceSecondaryText}>
+                        {guidance.secondaryText}
+                      </AppText>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
             ) : (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Bắt đầu dẫn đường đến ${selectedRoom.name}`}
-                onPress={handleRequestEscort}
-                disabled={loadingEscort}
-                style={({ pressed }) => [
-                  styles.startEscortBtn,
-                  pressed && { opacity: 0.85 },
-                  loadingEscort && { opacity: 0.6 },
-                ]}
-              >
-                {loadingEscort ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Ionicons name="walk" size={22} color="#FFFFFF" />
-                    <AppText style={styles.escortBtnText}>Bắt đầu Dẫn đường</AppText>
-                  </>
-                )}
-              </Pressable>
+              <View style={styles.idleRouteNotice}>
+                <Ionicons name="eye-outline" size={18} color={colors.textSecondary} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <AppText style={styles.idleNoticeTitle}>Chưa có lộ trình chỉ đường</AppText>
+                  <AppText variant="caption" style={styles.idleNoticeSub}>
+                    Bản đồ ở chế độ chỉ xem vị trí và đường dẫn khi có lệnh từ hệ thống.
+                  </AppText>
+                </View>
+              </View>
             )}
-          </View>
-
-          {/* 4. CHỌN NHANH ĐIỂM ĐẾN TỪ DỮ LIỆU API MAP */}
-          <View style={styles.quickRoomsCard}>
-            <AppText variant="caption" style={styles.quickRoomsLabel}>
-              CHỌN NHANH ĐIỂM ĐẾN TRÊN MAP
-            </AppText>
-            <View style={styles.quickRoomsRow}>
-              {destinations.map((item) => {
-                const isSelected =
-                  item.id === selectedRoom.id ||
-                  item.roomCode.toLowerCase() === selectedRoom.roomCode.toLowerCase();
-                return (
-                  <Pressable
-                    key={item.id}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Chọn phòng ${item.name}`}
-                    onPress={() => {
-                      const ep = mapEndpoints.find(
-                        (e) =>
-                          e.endpointId === item.id ||
-                          e.endpointCode.toLowerCase() === item.roomCode.toLowerCase()
-                      );
-                      if (ep) {
-                        selectDestinationEndpoint(ep);
-                      } else {
-                        setSelectedRoomId(item.id);
-                      }
-                    }}
-                    style={({ pressed }) => [
-                      styles.roomChip,
-                      isSelected ? styles.roomChipSelected : styles.roomChipUnselected,
-                      pressed && { opacity: 0.75 },
-                    ]}
-                  >
-                    <Ionicons
-                      name="location-outline"
-                      size={13}
-                      color={isSelected ? colors.textInverse : colors.textSecondary}
-                    />
-                    <AppText
-                      style={[
-                        styles.roomChipText,
-                        isSelected && styles.roomChipTextSelected,
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {item.name}
-                    </AppText>
-                  </Pressable>
-                );
-              })}
-            </View>
           </View>
         </ScrollView>
       </View>
@@ -975,7 +405,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   landscapeMapColumn: {
-    flex: 2,
+    flex: 2.3,
     height: '100%',
     paddingRight: spacing.md,
     justifyContent: 'flex-start',
@@ -993,46 +423,34 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 2,
   },
-
   landscapeControlColumn: {
     flex: 1,
     height: '100%',
-  },
-  controlScroll: {
-    flex: 1,
-  },
-  controlScrollContent: {
-    paddingBottom: spacing.xxl,
     gap: spacing.md,
   },
-
-  // Action buttons row (SOS & Voice)
-  actionButtonsRow: {
-    gap: spacing.sm,
-  },
   sosButton: {
-    minHeight: 58,
+    minHeight: 70,
     backgroundColor: colors.danger,
     borderRadius: radii.md,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     shadowColor: colors.danger,
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.28,
     shadowRadius: 6,
-    elevation: 3,
+    elevation: 4,
   },
   sosButtonPressed: {
     opacity: 0.88,
     transform: [{ scale: 0.985 }],
   },
   sosIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1042,59 +460,23 @@ const styles = StyleSheet.create({
   },
   sosTitle: {
     color: '#FFFFFF',
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
   },
   sosSubtitle: {
     color: '#FEE2E2',
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 12.5,
+    fontWeight: '600',
   },
-
-  assistantButton: {
-    minHeight: 56,
-    backgroundColor: colors.surface,
-    borderRadius: radii.md,
-    borderColor: colors.border,
-    borderWidth: 1,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
+  infoScroll: {
+    flex: 1,
+  },
+  infoScrollContent: {
     gap: spacing.md,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
+    paddingBottom: spacing.md,
   },
-  assistantButtonPressed: {
-    backgroundColor: colors.surfaceMuted,
-    transform: [{ scale: 0.985 }],
-  },
-  assistantIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surfaceMuted,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  assistantTitle: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  assistantSubtitle: {
-    color: colors.textSecondary,
-    fontSize: 12,
-  },
-
-  // 3. Destination card
-  destinationCard: {
+  infoCard: {
     backgroundColor: colors.surface,
     borderRadius: radii.xl,
     padding: spacing.lg,
@@ -1111,6 +493,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
+    flexWrap: 'wrap',
   },
   sectionIconSquare: {
     width: 26,
@@ -1121,30 +504,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardHeaderTitle: {
+    flex: 1,
     color: colors.textMuted,
     fontWeight: '700',
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
-  feedbackBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.warningSurface,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-  },
-  feedbackBannerText: {
-    color: colors.warningText,
-    fontWeight: '600',
-    flex: 1,
+  routeActiveBox: {
+    gap: spacing.sm,
   },
   roomDetailBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
     backgroundColor: colors.surfaceMuted,
     padding: spacing.md,
     borderRadius: radii.md,
@@ -1165,87 +536,43 @@ const styles = StyleSheet.create({
   roomNameText: {
     color: colors.textPrimary,
     fontWeight: '800',
-    fontSize: 18,
-    lineHeight: 24,
-  },
-  roomSubDetailText: {
-    color: colors.textSecondary,
-    marginTop: 2,
-  },
-  startEscortBtn: {
-    minHeight: 56,
-    backgroundColor: colors.hero,
-    borderRadius: radii.pill,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  stopEscortBtn: {
-    minHeight: 56,
-    backgroundColor: colors.danger,
-    borderRadius: radii.pill,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  escortBtnText: {
-    color: colors.textInverse,
     fontSize: 16,
-    fontWeight: '700',
+    lineHeight: 22,
   },
-
-  // 4. Quick rooms
-  quickRoomsCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
+  guidancePreviewBox: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+    borderWidth: 1,
+    borderRadius: radii.md,
     padding: spacing.md,
-    borderColor: colors.border,
-    borderWidth: 1,
+    gap: 2,
+  },
+  guidancePrimaryText: {
+    color: '#1E3A8A',
+    fontSize: 14.5,
+    fontWeight: '700',
+  },
+  guidanceSecondaryText: {
+    color: '#1D4ED8',
+    fontWeight: '500',
+  },
+  idleRouteNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: spacing.sm,
-  },
-  quickRoomsLabel: {
-    color: colors.textMuted,
-    fontWeight: '700',
-    letterSpacing: 0.4,
-  },
-  quickRoomsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  roomChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    minHeight: 40,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    borderRadius: radii.sm,
-  },
-  roomChipUnselected: {
     backgroundColor: colors.surfaceMuted,
+    padding: spacing.md,
+    borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderMuted,
   },
-  roomChipSelected: {
-    backgroundColor: colors.hero,
-    borderWidth: 1,
-    borderColor: colors.hero,
-  },
-  roomChipText: {
+  idleNoticeTitle: {
     color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  roomChipTextSelected: {
-    color: colors.textInverse,
+    fontSize: 14,
     fontWeight: '700',
+  },
+  idleNoticeSub: {
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
 });
