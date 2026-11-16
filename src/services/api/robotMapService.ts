@@ -7,6 +7,7 @@ import {
 } from '../../components/map/BackendHospitalMap';
 import { NavigationGuidanceResult } from '../../features/navigation/navigationGuidance';
 import { DEFAULT_ROBOT_CODE, generateUuid } from './config';
+import { parseDeviceJwtClaims } from './client';
 import { robotApiService } from './robotApiService';
 import defaultPresentationData from './defaultPresentationMap.json';
 
@@ -270,13 +271,155 @@ export const DEFAULT_HOSPITAL_ENDPOINTS: EndpointResponse[] = [
   },
 ];
 
+const VIEWER_LOGIN_COOLDOWN_MS = 20_000;
+const ROBOT_LOOKUP_COOLDOWN_MS = 30_000;
+
 let cachedViewerToken: string | null = null;
 let tokenExpiresAt = 0;
+let viewerTokenPromise: Promise<string | null> | null = null;
+let viewerLoginCooldownUntil = 0;
 let cachedActiveRobotId: string = '0e3f1083-2546-4f45-8004-5eda5cb75a6f';
+let hasResolvedRobotId = false;
+let robotLookupCooldownUntil = 0;
+
+export interface RobotSnapshotSummary {
+  pose: MapRobotPose | null;
+  isPoseLive: boolean;
+  status: string;
+  batteryRaw: number;
+  mqttConnected: boolean;
+  navigationPlan: MapPlanPoint[] | null;
+  planEndpointId?: string | null;
+  planEndpointName?: string | null;
+  backendGuidance?: NavigationGuidanceResult | null;
+  sessionMapId?: string | null;
+  sessionId?: string | null;
+  sessionState?: string | null;
+  activeJobId?: string | null;
+  dispatchReady?: boolean;
+  snapshotReachable?: boolean;
+}
+
+function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummary {
+  const p = snapshot?.latestPose;
+  const pose: MapRobotPose | null =
+    p && Number.isFinite(Number(p.xM)) && Number.isFinite(Number(p.yM))
+      ? {
+          xM: Number(p.xM),
+          yM: Number(p.yM),
+          yawRad: Number(p.yawRad) || 0,
+          fresh: Boolean(p.fresh),
+          mapId: p.mapId,
+        }
+      : null;
+
+  const rawPlan = guidData?.plan || snapshot?.navigationPlan;
+  let navigationPlan: MapPlanPoint[] | null = null;
+  const rawPoints = rawPlan?.points;
+  if (Array.isArray(rawPoints) && rawPoints.length >= 2) {
+    navigationPlan = rawPoints
+      .map((pt: any) => ({
+        xM: Number(pt?.xM ?? pt?.x_m ?? pt?.x),
+        yM: Number(pt?.yM ?? pt?.y_m ?? pt?.y),
+      }))
+      .filter((pt) => Number.isFinite(pt.xM) && Number.isFinite(pt.yM));
+  }
+
+  let backendGuidance: NavigationGuidanceResult | null = null;
+  if (
+    guidData &&
+    ['TRACKING', 'WAITING_FOR_POSE', 'ARRIVED'].includes(guidData.state) &&
+    navigationPlan &&
+    navigationPlan.length >= 2
+  ) {
+    const epName = rawPlan?.endpointName || 'Điểm đến';
+    const remCm =
+      typeof guidData.remainingCm === 'number' ? Math.round(guidData.remainingCm) : undefined;
+    backendGuidance = {
+      state: guidData.state,
+      direction: guidData.direction,
+      distanceCm:
+        typeof guidData.distanceCm === 'number' ? Math.round(guidData.distanceCm) : remCm,
+      remainingCm: remCm,
+      turn:
+        guidData.turn &&
+        Number.isFinite(Number(guidData.turn.xM)) &&
+        Number.isFinite(Number(guidData.turn.yM))
+          ? { xM: Number(guidData.turn.xM), yM: Number(guidData.turn.yM) }
+          : undefined,
+      projection:
+        guidData.projection &&
+        Number.isFinite(Number(guidData.projection.xM)) &&
+        Number.isFinite(Number(guidData.projection.yM))
+          ? { xM: Number(guidData.projection.xM), yM: Number(guidData.projection.yM) }
+          : undefined,
+      segmentIndex:
+        typeof guidData.segmentIndex === 'number' ? guidData.segmentIndex : undefined,
+      primaryText: guidData.text || 'Đang chờ vị trí robot',
+      secondaryText:
+        guidData.state === 'TRACKING' && typeof remCm === 'number'
+          ? `${epName} · Còn ${remCm} cm`
+          : epName,
+      observedAt: guidData.observedAt,
+    };
+  }
+
+  return {
+    pose,
+    isPoseLive: Boolean(
+      snapshot?.mqttConnected && snapshot?.heartbeatFresh && p?.fresh !== false
+    ),
+    status: snapshot?.robot?.status || 'IDLE',
+    batteryRaw: snapshot?.robot?.batteryRaw || 7850,
+    mqttConnected: Boolean(snapshot?.mqttConnected),
+    navigationPlan:
+      navigationPlan && navigationPlan.length >= 2 ? navigationPlan : null,
+    planEndpointId: rawPlan?.endpointId || null,
+    planEndpointName: rawPlan?.endpointName || null,
+    backendGuidance,
+    sessionMapId: snapshot?.navigationSession?.mapId || null,
+    sessionId: snapshot?.navigationSession?.sessionId || null,
+    sessionState: snapshot?.navigationSession?.state || null,
+    activeJobId: snapshot?.activeJobId || null,
+    dispatchReady: Boolean(snapshot?.dispatchReady),
+    snapshotReachable: true,
+  };
+}
+
+export const POLL_INTERVAL_ACTIVE_MS = 2_500;
+export const POLL_INTERVAL_IDLE_MS = 8_000;
+export const POLL_INTERVAL_OFFLINE_MS = 10_000;
+
+/**
+ * Chu kỳ poll thích ứng theo trạng thái hoạt động của robot:
+ * - 2.5s khi robot đang chạy / có job / có lộ trình
+ * - 8s khi IDLE không có job
+ * - 10s khi mất kết nối tạm thời
+ */
+export function getAdaptivePollDelayMs(summary: RobotSnapshotSummary | null | undefined): number {
+  if (!summary || summary.snapshotReachable === false) {
+    return POLL_INTERVAL_OFFLINE_MS;
+  }
+  const hasPlan = Boolean(summary.navigationPlan && summary.navigationPlan.length >= 2);
+  const isActive = Boolean(summary.activeJobId || hasPlan || summary.status !== 'IDLE');
+  return isActive ? POLL_INTERVAL_ACTIVE_MS : POLL_INTERVAL_IDLE_MS;
+}
 
 class RobotMapService {
   /**
-   * Lấy token đọc dữ liệu hệ thống (viewer/admin) từ Backend
+   * Xóa cache phiên viewer (phục vụ kiểm thử hoặc làm mới kết nối)
+   */
+  public resetViewerCache() {
+    cachedViewerToken = null;
+    tokenExpiresAt = 0;
+    viewerTokenPromise = null;
+    viewerLoginCooldownUntil = 0;
+    hasResolvedRobotId = false;
+    robotLookupCooldownUntil = 0;
+  }
+
+  /**
+   * Lấy token đọc dữ liệu hệ thống (viewer/admin) với single-flight dedup và backoff khi lỗi
    */
   public async getViewerToken(): Promise<string | null> {
     const now = Date.now();
@@ -284,28 +427,49 @@ class RobotMapService {
       return cachedViewerToken;
     }
 
-    try {
-      const res = await fetch(`${REMOTE_API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: 'admin',
-          password: '1234567891011',
-          deviceInfo: 'RobotScreen-LiveMonitor',
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.accessToken) {
-          cachedViewerToken = data.accessToken;
-          tokenExpiresAt = now + 3600 * 1000;
-          return cachedViewerToken;
-        }
-      }
-    } catch {
-      // Ignored
+    if (now < viewerLoginCooldownUntil) {
+      return cachedViewerToken;
     }
-    return cachedViewerToken;
+
+    if (viewerTokenPromise) {
+      return viewerTokenPromise;
+    }
+
+    viewerTokenPromise = (async () => {
+      try {
+        const res = await fetch(`${REMOTE_API_BASE}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: 'admin',
+            password: '1234567891011',
+            deviceInfo: 'RobotScreen-LiveMonitor',
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.accessToken) {
+            const claims = parseDeviceJwtClaims(String(data.accessToken));
+            const expMs =
+              typeof claims?.exp === 'number'
+                ? claims.exp * 1000
+                : Date.now() + 3600 * 1000;
+            cachedViewerToken = String(data.accessToken);
+            tokenExpiresAt = expMs;
+            viewerLoginCooldownUntil = 0;
+            return cachedViewerToken;
+          }
+        }
+        viewerLoginCooldownUntil = Date.now() + VIEWER_LOGIN_COOLDOWN_MS;
+      } catch {
+        viewerLoginCooldownUntil = Date.now() + VIEWER_LOGIN_COOLDOWN_MS;
+      } finally {
+        viewerTokenPromise = null;
+      }
+      return cachedViewerToken;
+    })();
+
+    return viewerTokenPromise;
   }
 
   /**
@@ -327,6 +491,7 @@ class RobotMapService {
     let allEndpoints: EndpointResponse[] = [];
     let allZones: ZoneDto[] = [];
     let liveSessionMapId: string | null = null;
+    let initialSnapshot: RobotSnapshotSummary | null = null;
 
     try {
       const [mapsRes, epRes, zonesRes, snapRes] = await Promise.all([
@@ -366,6 +531,7 @@ class RobotMapService {
 
       if (snapRes?.ok) {
         const snapData = await snapRes.json();
+        initialSnapshot = buildSnapshotSummary(snapData, null);
         const sess = snapData?.navigationSession;
         const planMapId = snapData?.navigationPlan?.mapId;
         if (planMapId) {
@@ -493,37 +659,25 @@ class RobotMapService {
       endpoints,
       presentation,
       token,
+      initialSnapshot,
     };
   }
 
   /**
-   * Tải snapshot, vị trí thời gian thực và chỉ dẫn điều hướng (navigation-guidance) của Robot
+   * Tải snapshot, vị trí thời gian thực và chỉ dẫn điều hướng (chỉ gọi navigation-guidance khi đang có hoạt động)
    */
-  public async loadRobotSnapshot(): Promise<{
-    pose: MapRobotPose | null;
-    isPoseLive: boolean;
-    status: string;
-    batteryRaw: number;
-    mqttConnected: boolean;
-    navigationPlan: MapPlanPoint[] | null;
-    planEndpointId?: string | null;
-    planEndpointName?: string | null;
-    backendGuidance?: NavigationGuidanceResult | null;
-    sessionMapId?: string | null;
-    sessionId?: string | null;
-    sessionState?: string | null;
-    activeJobId?: string | null;
-    dispatchReady?: boolean;
-    snapshotReachable?: boolean;
-  }> {
+  public async loadRobotSnapshot(options?: {
+    includeGuidance?: boolean;
+  }): Promise<RobotSnapshotSummary> {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
 
-    // 1. Nhận diện ID robot theo cấu hình
+    // 1. Nhận diện ID robot theo cấu hình (chỉ lookup /robots tối đa 1 lần hoặc sau cooldown)
     const configuredRobotId = (process.env.EXPO_PUBLIC_ROBOT_ID || '').trim();
     if (configuredRobotId) {
       cachedActiveRobotId = configuredRobotId;
-    } else {
+      hasResolvedRobotId = true;
+    } else if (!hasResolvedRobotId && Date.now() >= robotLookupCooldownUntil) {
       try {
         const robotsRes = await fetch(`${REMOTE_API_BASE}/robots`, { headers });
         if (robotsRes.ok) {
@@ -538,108 +692,46 @@ class RobotMapService {
               cachedActiveRobotId = selected.robotId;
             }
           }
+          hasResolvedRobotId = true;
+        } else {
+          robotLookupCooldownUntil = Date.now() + ROBOT_LOOKUP_COOLDOWN_MS;
         }
-      } catch {}
+      } catch {
+        robotLookupCooldownUntil = Date.now() + ROBOT_LOOKUP_COOLDOWN_MS;
+      }
     }
 
-    // 2. Lấy đồng thời Snapshot và Navigation Guidance từ Backend (đồng bộ với map-navigation.js)
+    // 2. Lấy snapshot trước; chỉ gọi navigation-guidance khi robot không IDLE hoặc đang có job/plan
     try {
-      const [snapRes, guidRes] = await Promise.all([
-        fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, { headers }),
-        fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/navigation-guidance`, {
-          headers,
-        }).catch(() => null),
-      ]);
+      const snapRes = await fetch(`${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/snapshot`, {
+        headers,
+      });
+
+      if (snapRes.status === 401) {
+        cachedViewerToken = null;
+        tokenExpiresAt = 0;
+      }
 
       if (snapRes.ok) {
         const snapshot = await snapRes.json();
-        const guidData = guidRes?.ok ? await guidRes.json().catch(() => null) : null;
+        const robotState = snapshot?.robot?.status || 'IDLE';
+        const hasPlanPoints =
+          Array.isArray(snapshot?.navigationPlan?.points) &&
+          snapshot.navigationPlan.points.length >= 2;
+        const shouldFetchGuidance =
+          options?.includeGuidance !== false &&
+          Boolean(snapshot?.activeJobId || hasPlanPoints || robotState !== 'IDLE');
 
-        const p = snapshot?.latestPose;
-        const pose: MapRobotPose | null =
-          p && Number.isFinite(Number(p.xM)) && Number.isFinite(Number(p.yM))
-            ? {
-                xM: Number(p.xM),
-                yM: Number(p.yM),
-                yawRad: Number(p.yawRad) || 0,
-                fresh: Boolean(p.fresh),
-                mapId: p.mapId,
-              }
-            : null;
-
-        // Trích xuất quỹ đạo từ navigation-guidance.plan hoặc snapshot.navigationPlan
-        const rawPlan = guidData?.plan || snapshot?.navigationPlan;
-        let navigationPlan: MapPlanPoint[] | null = null;
-        const rawPoints = rawPlan?.points;
-        if (Array.isArray(rawPoints) && rawPoints.length >= 2) {
-          navigationPlan = rawPoints
-            .map((pt: any) => ({
-              xM: Number(pt?.xM ?? pt?.x_m ?? pt?.x),
-              yM: Number(pt?.yM ?? pt?.y_m ?? pt?.y),
-            }))
-            .filter((pt) => Number.isFinite(pt.xM) && Number.isFinite(pt.yM));
+        let guidData: any = null;
+        if (shouldFetchGuidance) {
+          const guidRes = await fetch(
+            `${REMOTE_API_BASE}/robots/${cachedActiveRobotId}/navigation-guidance`,
+            { headers }
+          ).catch(() => null);
+          guidData = guidRes?.ok ? await guidRes.json().catch(() => null) : null;
         }
 
-        // Chuyển đổi kết quả từ /navigation-guidance của BE sang NavigationGuidanceResult
-        let backendGuidance: NavigationGuidanceResult | null = null;
-        if (
-          guidData &&
-          ['TRACKING', 'WAITING_FOR_POSE', 'ARRIVED'].includes(guidData.state) &&
-          navigationPlan &&
-          navigationPlan.length >= 2
-        ) {
-          const epName = rawPlan?.endpointName || 'Điểm đến';
-          const remCm =
-            typeof guidData.remainingCm === 'number' ? Math.round(guidData.remainingCm) : undefined;
-          backendGuidance = {
-            state: guidData.state,
-            direction: guidData.direction,
-            distanceCm:
-              typeof guidData.distanceCm === 'number' ? Math.round(guidData.distanceCm) : remCm,
-            remainingCm: remCm,
-            turn:
-              guidData.turn &&
-              Number.isFinite(Number(guidData.turn.xM)) &&
-              Number.isFinite(Number(guidData.turn.yM))
-                ? { xM: Number(guidData.turn.xM), yM: Number(guidData.turn.yM) }
-                : undefined,
-            projection:
-              guidData.projection &&
-              Number.isFinite(Number(guidData.projection.xM)) &&
-              Number.isFinite(Number(guidData.projection.yM))
-                ? { xM: Number(guidData.projection.xM), yM: Number(guidData.projection.yM) }
-                : undefined,
-            segmentIndex:
-              typeof guidData.segmentIndex === 'number' ? guidData.segmentIndex : undefined,
-            primaryText: guidData.text || 'Đang chờ vị trí robot',
-            secondaryText:
-              guidData.state === 'TRACKING' && typeof remCm === 'number'
-                ? `${epName} · Còn ${remCm} cm`
-                : epName,
-            observedAt: guidData.observedAt,
-          };
-        }
-
-        return {
-          pose,
-          isPoseLive: Boolean(
-            snapshot?.mqttConnected && snapshot?.heartbeatFresh && p?.fresh !== false
-          ),
-          status: snapshot?.robot?.status || 'IDLE',
-          batteryRaw: snapshot?.robot?.batteryRaw || 7850,
-          mqttConnected: Boolean(snapshot?.mqttConnected),
-          navigationPlan:
-            navigationPlan && navigationPlan.length >= 2 ? navigationPlan : null,
-          planEndpointId: rawPlan?.endpointId || null,
-          planEndpointName: rawPlan?.endpointName || null,
-          backendGuidance,
-          sessionMapId: snapshot?.navigationSession?.mapId || null,
-          sessionId: snapshot?.navigationSession?.sessionId || null,
-          sessionState: snapshot?.navigationSession?.state || null,
-          activeJobId: snapshot?.activeJobId || null,
-          dispatchReady: Boolean(snapshot?.dispatchReady),
-          snapshotReachable: true,
-        };
+        return buildSnapshotSummary(snapshot, guidData);
       }
     } catch {}
 
@@ -667,7 +759,7 @@ class RobotMapService {
     mapId: string,
     sessionId?: string | null
   ): Promise<{ ok: boolean; serviceRequestId?: string; workflowId?: string; reason?: string }> {
-    const snapshot = await this.loadRobotSnapshot();
+    const snapshot = await this.loadRobotSnapshot({ includeGuidance: false });
     if (snapshot.snapshotReachable && snapshot.status !== 'IDLE') {
       return {
         ok: false,

@@ -11,7 +11,14 @@ vi.mock('expo-constants', () => ({
 import { apiClient, parseDeviceJwtClaims } from '../src/services/api/client';
 import { createPiEnvelope } from '../src/services/api/envelope';
 import { robotApiService } from '../src/services/api/robotApiService';
-import { REMOTE_API_BASE, robotMapService } from '../src/services/api/robotMapService';
+import {
+  getAdaptivePollDelayMs,
+  POLL_INTERVAL_ACTIVE_MS,
+  POLL_INTERVAL_IDLE_MS,
+  POLL_INTERVAL_OFFLINE_MS,
+  REMOTE_API_BASE,
+  robotMapService,
+} from '../src/services/api/robotMapService';
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -686,5 +693,164 @@ describe('robotMapService.loadMapPackage', () => {
     expect(result.reason).toContain('BUSY');
     expect(urls.some((u) => u.includes('/requests/navigation'))).toBe(false);
     expect(urls.some((u) => u.includes('test-workflows/run'))).toBe(false);
+  });
+});
+
+describe('robotMapService polling & viewer auth optimization', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    robotMapService.resetViewerCache();
+  });
+
+  afterEach(() => {
+    robotMapService.resetViewerCache();
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('deduplicates concurrent getViewerToken calls into a single /auth/login request', async () => {
+    let loginCalls = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        loginCalls += 1;
+        await new Promise((r) => setTimeout(r, 15));
+        return jsonResponse({ accessToken: 'shared-viewer-jwt' });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const [t1, t2, t3] = await Promise.all([
+      robotMapService.getViewerToken(),
+      robotMapService.getViewerToken(),
+      robotMapService.getViewerToken(),
+    ]);
+
+    expect(loginCalls).toBe(1);
+    expect(t1).toBe('shared-viewer-jwt');
+    expect(t2).toBe('shared-viewer-jwt');
+    expect(t3).toBe('shared-viewer-jwt');
+  });
+
+  it('applies cooldown backoff when /auth/login fails instead of retrying immediately', async () => {
+    let loginCalls = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        loginCalls += 1;
+        return jsonResponse({ message: 'Invalid credentials' }, 401);
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const first = await robotMapService.getViewerToken();
+    const second = await robotMapService.getViewerToken();
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(loginCalls).toBe(1);
+  });
+
+  it('skips /navigation-guidance when IDLE without job/plan and fetches it when active', async () => {
+    let activeMode = false;
+    const requestedUrls: string[] = [];
+
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      requestedUrls.push(url);
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `${REMOTE_API_BASE}/robots`) {
+        return jsonResponse({ content: [{ robotId: 'robot-opt-1', robotCode: 'ROBOT_MAR_01' }] });
+      }
+      if (url.endsWith('/snapshot')) {
+        if (!activeMode) {
+          return jsonResponse({
+            robot: { status: 'IDLE', batteryRaw: 8500 },
+            activeJobId: null,
+            navigationPlan: null,
+          });
+        }
+        return jsonResponse({
+          robot: { status: 'BUSY', batteryRaw: 8400 },
+          activeJobId: 'job-active-1',
+          navigationPlan: {
+            endpointId: 'ep-1',
+            endpointName: 'Lễ tân',
+            points: [
+              { xM: 0.5, yM: 2.0 },
+              { xM: 0.6, yM: 3.0 },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/navigation-guidance')) {
+        return jsonResponse({
+          state: 'TRACKING',
+          direction: 'STRAIGHT',
+          remainingCm: 100,
+          text: 'Đi thẳng 1 m',
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const idleSnap = await robotMapService.loadRobotSnapshot();
+    expect(idleSnap.status).toBe('IDLE');
+    expect(requestedUrls.some((u) => u.endsWith('/navigation-guidance'))).toBe(false);
+
+    requestedUrls.length = 0;
+    activeMode = true;
+
+    const busySnap = await robotMapService.loadRobotSnapshot();
+    expect(busySnap.status).toBe('BUSY');
+    expect(requestedUrls.some((u) => u.endsWith('/navigation-guidance'))).toBe(true);
+    expect(busySnap.backendGuidance?.state).toBe('TRACKING');
+  });
+
+  it('computes adaptive poll intervals for IDLE, active, and offline snapshots', () => {
+    expect(
+      getAdaptivePollDelayMs({
+        pose: null,
+        isPoseLive: false,
+        status: 'IDLE',
+        batteryRaw: 8000,
+        mqttConnected: true,
+        navigationPlan: null,
+        activeJobId: null,
+        snapshotReachable: true,
+      })
+    ).toBe(POLL_INTERVAL_IDLE_MS);
+
+    expect(
+      getAdaptivePollDelayMs({
+        pose: null,
+        isPoseLive: true,
+        status: 'BUSY',
+        batteryRaw: 8000,
+        mqttConnected: true,
+        navigationPlan: null,
+        activeJobId: 'job-1',
+        snapshotReachable: true,
+      })
+    ).toBe(POLL_INTERVAL_ACTIVE_MS);
+
+    expect(
+      getAdaptivePollDelayMs({
+        pose: null,
+        isPoseLive: false,
+        status: 'IDLE',
+        batteryRaw: 8000,
+        mqttConnected: false,
+        navigationPlan: null,
+        activeJobId: null,
+        snapshotReachable: false,
+      })
+    ).toBe(POLL_INTERVAL_OFFLINE_MS);
   });
 });
