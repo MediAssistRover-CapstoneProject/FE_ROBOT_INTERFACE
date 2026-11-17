@@ -149,7 +149,6 @@ export interface BackendHospitalMapProps {
   onAutoAlignReady?: (align: SlamAutoAlignResult | null) => void;
   interactive?: boolean;
   skipImageFetch?: boolean;
-  showEndpoints?: boolean;
 }
 
 interface MapPoint {
@@ -215,7 +214,6 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   onAutoAlignReady,
   interactive = true,
   skipImageFetch = false,
-  showEndpoints = true,
 }) => {
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -1242,113 +1240,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })()}
 
-          {/* 3. Điểm dừng / Điểm đến (ẩn trên tablet khi showEndpoints = false) */}
-          {showEndpoints &&
-            visibleEndpoints.map((endpoint) => {
-            const point = geometry.toViewPixel({
-              x: Number(endpoint.xM),
-              y: Number(endpoint.yM),
-            });
-            const lastPt =
-              validPlannedPath && validPlannedPath.length > 0
-                ? validPlannedPath[validPlannedPath.length - 1]
-                : null;
-            const isRouteDestination = Boolean(
-              lastPt &&
-                Math.hypot(Number(endpoint.xM) - lastPt.xM, Number(endpoint.yM) - lastPt.yM) <= 0.1
-            );
-            const isSelected =
-              selectedEndpointId === endpoint.endpointId ||
-              selectedEndpointId === endpoint.endpointCode ||
-              Boolean(
-                selectedEndpointId &&
-                  endpoint.endpointCode &&
-                  selectedEndpointId.toUpperCase() === endpoint.endpointCode.toUpperCase()
-              );
-
-            const r = Math.max(2.0, viewWidth / 66);
-            const hitRadius = Math.max(10, viewWidth / 16);
-            const angle = geometry.toViewHeadingRad(Number(endpoint.yawRad) || 0);
-            const tipX = point.x + Math.cos(angle) * (r * 2.25);
-            const tipY = point.y + Math.sin(angle) * (r * 2.25);
-            const leftX = point.x + Math.cos(angle + 2.45) * (r * 0.95);
-            const leftY = point.y + Math.sin(angle + 2.45) * (r * 0.95);
-            const rightX = point.x + Math.cos(angle - 2.45) * (r * 0.95);
-            const rightY = point.y + Math.sin(angle - 2.45) * (r * 0.95);
-            const conePoints = `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`;
-
-            const markerColor = isSelected && !isRouteDestination ? '#C75100' : '#157347';
-            const epLabel = (endpoint.endpointCode || endpoint.endpointName || '').trim();
-            const fontSize = Math.max(2.8, viewWidth / 62);
-
-            return (
-              <G
-                key={endpoint.endpointId || endpoint.endpointCode}
-                onPress={
-                  interactive && onSelectEndpoint ? () => onSelectEndpoint(endpoint) : undefined
-                }
-              >
-                {interactive && onSelectEndpoint && (
-                  <Circle
-                    cx={point.x}
-                    cy={point.y}
-                    r={hitRadius}
-                    fill="rgba(0, 0, 0, 0.001)"
-                    stroke="none"
-                  />
-                )}
-                {/* Nếu endpoint đang là đích đến của đường dẫn đỏ thì nhường chấm đỏ hiển thị rõ như ảnh mẫu */}
-                {!isRouteDestination && (
-                  <G pointerEvents="none">
-                    <Circle
-                      cx={point.x}
-                      cy={point.y}
-                      r={r}
-                      fill={markerColor}
-                      stroke="#FFFFFF"
-                      strokeWidth={Math.max(0.85, viewWidth / 170)}
-                    />
-                    <Polygon
-                      points={conePoints}
-                      fill={markerColor}
-                      stroke="#FFFFFF"
-                      strokeWidth={Math.max(0.75, viewWidth / 190)}
-                      strokeLinejoin="round"
-                    />
-                    {epLabel ? (
-                      <G>
-                        <SvgText
-                          x={point.x}
-                          y={point.y + r * 2.3 + fontSize}
-                          textAnchor="middle"
-                          fontSize={fontSize}
-                          fontWeight="700"
-                          fill="#FFFFFF"
-                          stroke="#FFFFFF"
-                          strokeWidth={Math.max(1.6, viewWidth / 100)}
-                          strokeLinejoin="round"
-                        >
-                          {epLabel}
-                        </SvgText>
-                        <SvgText
-                          x={point.x}
-                          y={point.y + r * 2.3 + fontSize}
-                          textAnchor="middle"
-                          fontSize={fontSize}
-                          fontWeight="700"
-                          fill="#1F2430"
-                        >
-                          {epLabel}
-                        </SvgText>
-                      </G>
-                    ) : null}
-                  </G>
-                )}
-              </G>
-            );
-          })}
-
-          {/* 4. Vị trí và Hướng của Robot AMR phong cách OTTO Motors (thân trắng, nắp khoang tối, dải LED cyan định hướng) */}
+          {/* 3. Vị trí và Hướng của Robot AMR phong cách OTTO Motors (thân trắng, nắp khoang tối, dải LED cyan định hướng) */}
           {validRobotPose && (() => {
             const robotPt = geometry.toViewPixel({
               x: validRobotPose.xM,
@@ -1514,12 +1406,6 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             <View style={[styles.legendDot, { backgroundColor: '#06B6D4' }]} />
             <Text style={styles.legendLabel}>Robot AMR</Text>
           </View>
-          {showEndpoints && (
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#157347' }]} />
-              <Text style={styles.legendLabel}>Endpoint đã lưu</Text>
-            </View>
-          )}
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#D94B3D' }]} />
             <Text style={styles.legendLabel}>Điểm đến</Text>

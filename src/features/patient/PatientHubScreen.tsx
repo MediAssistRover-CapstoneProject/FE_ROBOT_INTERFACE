@@ -404,7 +404,6 @@ export function PatientHubScreen({ navigation }: Props) {
               <BackendHospitalMap
                 interactive={false}
                 skipImageFetch={!isMapLoaded}
-                showEndpoints={false}
                 map={activeMap}
                 metadata={mapMetadata}
                 endpoints={endpoints}
