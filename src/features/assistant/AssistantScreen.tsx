@@ -281,20 +281,20 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   heroCard: {
-    backgroundColor: colors.hero,
+    backgroundColor: colors.heroBlockBg,
     borderRadius: radii.xl,
     padding: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
     borderWidth: 1,
-    borderColor: colors.darkRaised,
+    borderColor: colors.heroNestedBg,
   },
   heroIconCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.darkRaised,
+    backgroundColor: colors.heroNestedBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -333,7 +333,7 @@ const styles = StyleSheet.create({
   },
   userMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: colors.hero,
+    backgroundColor: colors.heroSurface,
   },
   messageAuthor: {
     color: colors.textMuted,

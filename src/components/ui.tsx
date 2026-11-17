@@ -112,7 +112,7 @@ export function Button({
     ? colors.surface
     : isDanger
     ? colors.danger
-    : colors.primaryAction;
+    : colors.primaryButtonBg;
 
   const foreground = isSecondary ? colors.textPrimary : colors.textInverse;
 
@@ -194,7 +194,7 @@ export function StatusChip({
       border: colors.border,
     },
     hero: {
-      bg: colors.hero,
+      bg: colors.heroSurface,
       text: colors.textInverse,
       iconColor: colors.textInverse,
     },
@@ -270,7 +270,7 @@ export function IconButton({
   const isGhost = variant === 'ghost';
 
   const bg = isDark
-    ? colors.hero
+    ? colors.heroSurface
     : isDanger
     ? colors.dangerSurface
     : isGhost
@@ -297,7 +297,7 @@ export function IconButton({
           borderRadius: size / 2,
           backgroundColor: bg,
           borderWidth: isGhost ? 0 : 1,
-          borderColor: isDark ? colors.darkRaised : colors.border,
+          borderColor: isDark ? colors.heroNestedBg : colors.border,
         },
         disabled && { opacity: 0.5 },
         pressed && { opacity: 0.75 },
@@ -413,8 +413,8 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   cardHero: {
-    backgroundColor: colors.hero,
-    borderColor: colors.darkRaised,
+    backgroundColor: colors.heroBlockBg,
+    borderColor: colors.heroNestedBg,
   },
   cardMuted: {
     backgroundColor: colors.surfaceMuted,
