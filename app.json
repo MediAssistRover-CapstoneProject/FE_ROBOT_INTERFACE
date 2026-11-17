@@ -14,7 +14,9 @@
     },
     "android": {
       "package": "com.mediassist.rover",
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro"
@@ -28,7 +30,8 @@
         {
           "cameraPermission": "Ứng dụng cần quyền camera để xác thực khuôn mặt nhận hàng y tế."
         }
-      ]
+      ],
+      "expo-audio"
     ]
   }
 }

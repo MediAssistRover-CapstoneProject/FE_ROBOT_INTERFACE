@@ -369,5 +369,36 @@ export interface CameraVerifyRequest {
 export interface StaffQrScanWindow {
   jobId: string;
   authJobStepId: string;
+  purpose?: 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
   expiresAt: string;
+}
+
+export type MediaSessionMode = 'MONITOR' | 'ASSIST';
+
+export type MediaSessionState =
+  | 'RINGING'
+  | 'CONNECTING'
+  | 'ACTIVE'
+  | 'RECONNECTING'
+  | 'ENDED'
+  | 'FAILED'
+  | 'EXPIRED';
+
+export interface DeviceMediaSessionView {
+  sessionId: string;
+  robotId?: string;
+  incidentId?: string | null;
+  staffAccountId?: string | null;
+  mode?: MediaSessionMode | string;
+  state: MediaSessionState | string;
+  createdAt?: string;
+  expiresAt?: string;
+  deviceSeenAt?: string;
+  endedAt?: string | null;
+  endReason?: string | null;
+}
+
+export interface DeviceMediaSessionEvent {
+  enabled: boolean;
+  session?: DeviceMediaSessionView | null;
 }

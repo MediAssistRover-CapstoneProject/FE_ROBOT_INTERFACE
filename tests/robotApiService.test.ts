@@ -10,7 +10,7 @@ vi.mock('expo-constants', () => ({
 
 import { apiClient, parseDeviceJwtClaims } from '../src/services/api/client';
 import { createPiEnvelope } from '../src/services/api/envelope';
-import { robotApiService } from '../src/services/api/robotApiService';
+import { parseSseMediaEventsChunk, robotApiService } from '../src/services/api/robotApiService';
 import {
   getAdaptivePollDelayMs,
   POLL_INTERVAL_ACTIVE_MS,
@@ -369,6 +369,69 @@ describe('robotApiService', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://localhost:8080/api/v1/pi/media-session');
     expect(init?.method).toBe('GET');
+  });
+
+  it('parseSseMediaEventsChunk extracts valid media JSON events across partial chunks and skips keepalives', () => {
+    const chunk1 =
+      ':keepalive\n\nevent: media\ndata: {"enabled":true,"session":{"sessionId":"s-1","state":"RINGING"}}\n\nevent: media\ndata: {"enabled":true';
+    const first = parseSseMediaEventsChunk(chunk1);
+    expect(first.events).toHaveLength(1);
+    expect(first.events[0]?.session?.sessionId).toBe('s-1');
+    expect(first.events[0]?.session?.state).toBe('RINGING');
+
+    const chunk2 = ',"session":{"sessionId":"s-1","state":"EXPIRED","endReason":"STAFF_NOT_ANSWERED"}}\r\n\r\n';
+    const second = parseSseMediaEventsChunk(first.remainder + chunk2);
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0]?.session?.state).toBe('EXPIRED');
+    expect(second.events[0]?.session?.endReason).toBe('STAFF_NOT_ANSWERED');
+    expect(second.remainder).toBe('');
+  });
+
+  it('subscribeDeviceMediaEvents streams GET /api/v1/pi/media-session/events with Bearer token and aborts on cleanup', async () => {
+    const encoder = new TextEncoder();
+    let capturedSignal: AbortSignal | undefined;
+    const received: string[] = [];
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: media\ndata: {"enabled":true,"session":{"sessionId":"s-sse","incidentId":"inc-1","state":"RINGING"}}\n\n',
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(
+            'event: media\ndata: {"enabled":true,"session":{"sessionId":"s-sse","incidentId":"inc-1","state":"ACTIVE"}}\n\n',
+          ),
+        );
+      },
+    });
+
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Response(stream, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      });
+    });
+    global.fetch = fetchMock;
+
+    const unsubscribe = robotApiService.subscribeDeviceMediaEvents((evt) => {
+      if (evt.session?.state) received.push(evt.session.state);
+    });
+
+    await vi.waitFor(() => {
+      expect(received).toEqual(['RINGING', 'ACTIVE']);
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://localhost:8080/api/v1/pi/media-session/events');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer test-token-mar');
+    expect(headers.Accept).toBe('text/event-stream');
+
+    unsubscribe();
+    expect(capturedSignal?.aborted).toBe(true);
   });
 
   it('reportJobStarted posts envelope to /api/v1/pi/jobs/:jobId/started', async () => {
@@ -852,5 +915,126 @@ describe('robotMapService polling & viewer auth optimization', () => {
         snapshotReachable: false,
       })
     ).toBe(POLL_INTERVAL_OFFLINE_MS);
+  });
+
+  it('parses selectedJobStepId, selectedStepType and selectedStepCode from snapshot', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `${REMOTE_API_BASE}/robots`) {
+        return jsonResponse({ content: [{ robotId: 'robot-qr-1', robotCode: 'mar-v1' }] });
+      }
+      if (url.endsWith('/snapshot')) {
+        return jsonResponse({
+          robot: { status: 'BUSY', batteryRaw: 8800 },
+          activeJobId: 'job-qr-123',
+          selectedJobStepId: 'step-auth-456',
+          selectedStepType: 'AUTHENTICATE',
+          selectedStepCode: 'SENDER_AUTH',
+        });
+      }
+      if (url.endsWith('/navigation-guidance')) {
+        return jsonResponse({ state: 'IDLE' });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const snap = await robotMapService.loadRobotSnapshot();
+    expect(snap.activeJobId).toBe('job-qr-123');
+    expect(snap.selectedJobStepId).toBe('step-auth-456');
+    expect(snap.selectedStepType).toBe('AUTHENTICATE');
+    expect(snap.selectedStepCode).toBe('SENDER_AUTH');
+  });
+
+  it('fetches job camera-preview.jpg for 200 JPEG, 204 pending, and 404 unsupported', async () => {
+    let mode: 'ok' | 'empty' | 'not_found' = 'ok';
+    const sampleJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `${REMOTE_API_BASE}/jobs/job-cam-1/camera-preview.jpg`) {
+        if (mode === 'ok') {
+          return new Response(sampleJpeg, {
+            status: 200,
+            headers: {
+              'Content-Type': 'image/jpeg',
+              'X-Captured-At': '2026-11-16T05:00:00Z',
+              'X-Frame-Revision': '42',
+            },
+          });
+        }
+        if (mode === 'empty') {
+          return new Response(null, { status: 204 });
+        }
+        return jsonResponse({ message: 'Job has no mapping session' }, 404);
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const okRes = await robotMapService.fetchJobCameraPreview('job-cam-1');
+    expect(okRes.status).toBe(200);
+    expect(okRes.dataUri).toMatch(/^data:image\/jpeg;base64,/);
+    expect(okRes.capturedAt).toBe('2026-11-16T05:00:00Z');
+    expect(okRes.revision).toBe('42');
+
+    mode = 'empty';
+    const emptyRes = await robotMapService.fetchJobCameraPreview('job-cam-1');
+    expect(emptyRes.status).toBe(204);
+    expect(emptyRes.dataUri).toBeNull();
+
+    mode = 'not_found';
+    const nfRes = await robotMapService.fetchJobCameraPreview('job-cam-1');
+    expect(nfRes.status).toBe(404);
+    expect(nfRes.errorMessage).toContain('404');
+  });
+
+  it('checks job QR step completion and preserves purpose from getStaffQrScanWindow', async () => {
+    apiClient.setBaseUrl('http://localhost:8080');
+    apiClient.setToken('device-token', 'robot-qr-1');
+
+    const fetchMock = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === 'http://localhost:8080/api/v1/pi/jobs/job-qr-1/qr-challenge') {
+        return jsonResponse({
+          challengeId: 'chal-1',
+          authJobStepId: 'step-auth-1',
+          purpose: 'DELIVERY_RECEIVER',
+          expiresAt: '2026-11-16T05:10:00Z',
+        });
+      }
+      if (url === `${REMOTE_API_BASE}/jobs/job-qr-1`) {
+        return jsonResponse({
+          job: { status: 'RUNNING' },
+          steps: [
+            {
+              jobStepId: 'step-auth-1',
+              stepTypeSnapshot: 'AUTHENTICATE',
+              status: 'SUCCEEDED',
+              resultJson: { verified: true },
+            },
+          ],
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    global.fetch = fetchMock;
+
+    const win = await robotApiService.getStaffQrScanWindow('job-qr-1');
+    expect(win?.purpose).toBe('DELIVERY_RECEIVER');
+    expect(win?.authJobStepId).toBe('step-auth-1');
+
+    const status = await robotMapService.checkJobQrStepStatus('job-qr-1', 'step-auth-1');
+    expect(status?.verified).toBe(true);
+    expect(status?.stepStatus).toBe('SUCCEEDED');
   });
 });

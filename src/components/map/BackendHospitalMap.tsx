@@ -149,6 +149,7 @@ export interface BackendHospitalMapProps {
   onAutoAlignReady?: (align: SlamAutoAlignResult | null) => void;
   interactive?: boolean;
   skipImageFetch?: boolean;
+  showEndpoints?: boolean;
 }
 
 interface MapPoint {
@@ -214,6 +215,7 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
   onAutoAlignReady,
   interactive = true,
   skipImageFetch = false,
+  showEndpoints = true,
 }) => {
   const [isLoadingImage, setIsLoadingImage] = useState(true);
   const [imageFailed, setImageFailed] = useState(false);
@@ -1240,8 +1242,9 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })()}
 
-          {/* 3. Điểm dừng / Điểm đến (Endpoints: Chấm tròn xanh lá #157347 + Mũi tên hướng tam giác + Mã endpoint) */}
-          {visibleEndpoints.map((endpoint) => {
+          {/* 3. Điểm dừng / Điểm đến (ẩn trên tablet khi showEndpoints = false) */}
+          {showEndpoints &&
+            visibleEndpoints.map((endpoint) => {
             const point = geometry.toViewPixel({
               x: Number(endpoint.xM),
               y: Number(endpoint.yM),
@@ -1345,38 +1348,140 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
             );
           })}
 
-          {/* 4. Vị trí và Hướng của Robot (Chấm tròn xanh dương #0879EE + Mũi tên tam giác hướng đi chuẩn map-navigation.js) */}
+          {/* 4. Vị trí và Hướng của Robot AMR phong cách OTTO Motors (thân trắng, nắp khoang tối, dải LED cyan định hướng) */}
           {validRobotPose && (() => {
             const robotPt = geometry.toViewPixel({
               x: validRobotPose.xM,
               y: validRobotPose.yM,
             });
-            const angle = geometry.toViewHeadingRad(validRobotPose.yawRad);
-            const r = Math.max(3.8, (viewWidth / 58) * 1.65);
-            const tipX = robotPt.x + Math.cos(angle) * (r * 2.25);
-            const tipY = robotPt.y + Math.sin(angle) * (r * 2.25);
-            const leftX = robotPt.x + Math.cos(angle + 2.45) * (r * 0.95);
-            const leftY = robotPt.y + Math.sin(angle + 2.45) * (r * 0.95);
-            const rightX = robotPt.x + Math.cos(angle - 2.45) * (r * 0.95);
-            const rightY = robotPt.y + Math.sin(angle - 2.45) * (r * 0.95);
-            const conePoints = `${tipX},${tipY} ${leftX},${leftY} ${rightX},${rightY}`;
+            const angleDeg = (geometry.toViewHeadingRad(validRobotPose.yawRad) * 180) / Math.PI;
+            const s = Math.max(5.5, viewWidth / 28);
+            const bodyL = s * 2.15;
+            const bodyW = s * 1.48;
+            const cornerR = bodyW * 0.28;
+            const ledColor = isPoseLive ? '#06B6D4' : '#94A3B8';
+            const ledBright = isPoseLive ? '#22D3EE' : '#CBD5E1';
+            const auraFill = isPoseLive ? 'rgba(6, 182, 212, 0.14)' : 'rgba(148, 163, 184, 0.12)';
+            const auraStroke = isPoseLive
+              ? 'rgba(6, 182, 212, 0.42)'
+              : 'rgba(148, 163, 184, 0.28)';
+            const wedgeFill = isPoseLive
+              ? 'rgba(34, 211, 238, 0.24)'
+              : 'rgba(148, 163, 184, 0.14)';
+            const sideStripH = Math.max(0.8, s * 0.11);
 
             return (
-              <G pointerEvents="none">
+              <G
+                pointerEvents="none"
+                testID="robot-position-marker"
+                transform={`translate(${robotPt.x}, ${robotPt.y}) rotate(${angleDeg})`}
+              >
+                {/* Vòng hào quang telemetry xung quanh robot */}
                 <Circle
-                  cx={robotPt.x}
-                  cy={robotPt.y}
-                  r={r}
-                  fill="#0879EE"
-                  stroke="#FFFFFF"
-                  strokeWidth={Math.max(1.2, viewWidth / 125)}
+                  cx={0}
+                  cy={0}
+                  r={bodyL * 0.85}
+                  fill={auraFill}
+                  stroke={auraStroke}
+                  strokeWidth={Math.max(0.6, s * 0.08)}
                 />
+                {/* Vùng quét cảm biến LiDAR phía trước (+x) */}
                 <Polygon
-                  points={conePoints}
-                  fill="#0879EE"
-                  stroke="#FFFFFF"
-                  strokeWidth={Math.max(1.05, viewWidth / 140)}
-                  strokeLinejoin="round"
+                  points={`${bodyL * 0.42},0 ${bodyL * 1.18},${-bodyW * 0.68} ${bodyL * 1.18},${bodyW * 0.68}`}
+                  fill={wedgeFill}
+                />
+                {/* Bóng đổ khung xe AMR */}
+                <Rect
+                  x={-bodyL / 2 + s * 0.06}
+                  y={-bodyW / 2 + s * 0.1}
+                  width={bodyL}
+                  height={bodyW}
+                  rx={cornerR}
+                  ry={cornerR}
+                  fill="rgba(15, 23, 42, 0.22)"
+                />
+                {/* Thân xe OTTO trắng bo góc */}
+                <Rect
+                  x={-bodyL / 2}
+                  y={-bodyW / 2}
+                  width={bodyL}
+                  height={bodyW}
+                  rx={cornerR}
+                  ry={cornerR}
+                  fill="#FFFFFF"
+                  stroke="#0F172A"
+                  strokeWidth={Math.max(0.95, s * 0.12)}
+                />
+                {/* Dải LED Cyan mặt trước (mũi xe +x) */}
+                <Rect
+                  x={bodyL * 0.31}
+                  y={-bodyW * 0.43}
+                  width={bodyL * 0.17}
+                  height={bodyW * 0.86}
+                  rx={cornerR * 0.45}
+                  ry={cornerR * 0.45}
+                  fill={ledColor}
+                />
+                <Rect
+                  x={bodyL * 0.36}
+                  y={-bodyW * 0.33}
+                  width={bodyL * 0.09}
+                  height={bodyW * 0.66}
+                  rx={cornerR * 0.3}
+                  ry={cornerR * 0.3}
+                  fill={ledBright}
+                />
+                {/* Dải LED sườn xe 2 bên */}
+                <Rect
+                  x={-bodyL * 0.24}
+                  y={-bodyW * 0.48}
+                  width={bodyL * 0.44}
+                  height={sideStripH}
+                  rx={sideStripH / 2}
+                  fill={ledColor}
+                />
+                <Rect
+                  x={-bodyL * 0.24}
+                  y={bodyW * 0.48 - sideStripH}
+                  width={bodyL * 0.44}
+                  height={sideStripH}
+                  rx={sideStripH / 2}
+                  fill={ledColor}
+                />
+                {/* Nắp khoang màu tối ở giữa thân */}
+                <Rect
+                  x={-bodyL * 0.34}
+                  y={-bodyW * 0.32}
+                  width={bodyL * 0.56}
+                  height={bodyW * 0.64}
+                  rx={cornerR * 0.45}
+                  ry={cornerR * 0.45}
+                  fill="#1E293B"
+                  stroke="#334155"
+                  strokeWidth={Math.max(0.5, s * 0.06)}
+                />
+                {/* Mũi tên định hướng tiến phía trước trên nắp khoang */}
+                <Polygon
+                  points={`${bodyL * 0.12},0 ${-bodyL * 0.06},${-bodyW * 0.17} ${-bodyL * 0.01},0 ${-bodyL * 0.06},${bodyW * 0.17}`}
+                  fill={ledBright}
+                />
+                {/* Cụm LiDAR đầu xe */}
+                <Circle
+                  cx={bodyL * 0.22}
+                  cy={0}
+                  r={Math.max(1.0, s * 0.14)}
+                  fill="#0F172A"
+                  stroke={ledBright}
+                  strokeWidth={Math.max(0.55, s * 0.07)}
+                />
+                {/* Đèn đuôi phân biệt mặt sau (-x) */}
+                <Rect
+                  x={-bodyL * 0.46}
+                  y={-bodyW * 0.24}
+                  width={Math.max(0.8, s * 0.09)}
+                  height={bodyW * 0.48}
+                  rx={0.4}
+                  fill="#64748B"
                 />
               </G>
             );
@@ -1406,13 +1511,15 @@ export const BackendHospitalMap: React.FC<BackendHospitalMapProps> = ({
       <View style={styles.legendBar}>
         <View style={styles.legendRow}>
           <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#0879EE' }]} />
-            <Text style={styles.legendLabel}>Vị trí Robot</Text>
+            <View style={[styles.legendDot, { backgroundColor: '#06B6D4' }]} />
+            <Text style={styles.legendLabel}>Robot AMR</Text>
           </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#157347' }]} />
-            <Text style={styles.legendLabel}>Endpoint đã lưu</Text>
-          </View>
+          {showEndpoints && (
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#157347' }]} />
+              <Text style={styles.legendLabel}>Endpoint đã lưu</Text>
+            </View>
+          )}
           <View style={styles.legendItem}>
             <View style={[styles.legendDot, { backgroundColor: '#D94B3D' }]} />
             <Text style={styles.legendLabel}>Điểm đến</Text>

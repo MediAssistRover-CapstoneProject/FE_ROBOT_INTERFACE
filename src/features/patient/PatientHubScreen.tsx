@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   AppState,
-  Pressable,
   ScrollView,
   StyleSheet,
   View,
@@ -13,6 +12,8 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { RootStackParamList } from '../../app/navigation';
 import { AppText } from '../../components/ui';
+import { DraggableSosButton } from '../../components/DraggableSosButton';
+import { QrStaffCameraOverlay } from '../../components/QrStaffCameraOverlay';
 import {
   BackendHospitalMap,
   MapResponse,
@@ -21,9 +22,10 @@ import {
   MapRobotPose,
   MapPlanPoint,
 } from '../../components/map/BackendHospitalMap';
-import { apiClient } from '../../services/api';
+import { apiClient, robotApiService } from '../../services/api';
 import {
   computeGuidance,
+  guidanceSymbol,
   NavigationGuidanceResult,
 } from '../navigation/navigationGuidance';
 import {
@@ -41,9 +43,21 @@ import { colors, radii, spacing } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
+interface ActiveQrWindowState {
+  jobId: string;
+  authJobStepId: string | null;
+  stepCode: string | null;
+  purpose?: 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
+  expiresAt?: string | null;
+}
+
 export function PatientHubScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
   const isFocused = useIsFocused();
+  const [rootBounds, setRootBounds] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: 0,
+  });
 
   // Theo dõi trạng thái foreground của ứng dụng để tạm dừng poll khi xuống nền
   const [isAppActive, setIsAppActive] = useState<boolean>(AppState.currentState === 'active');
@@ -78,8 +92,57 @@ export function PatientHubScreen({ navigation }: Props) {
   const [planEndpointName, setPlanEndpointName] = useState<string | null>(null);
   const [backendGuidance, setBackendGuidance] = useState<NavigationGuidanceResult | null>(null);
 
+  // 4. Trạng thái hiển thị camera chờ Staff quét QR khi robot đang ở bước AUTHENTICATE
+  const [activeQrWindow, setActiveQrWindow] = useState<ActiveQrWindowState | null>(null);
+  const handledQrStepIdsRef = useRef<Set<string>>(new Set());
+  const checkingQrRef = useRef<boolean>(false);
+
   const pollInFlightRef = useRef<boolean>(false);
   const initialDelayRef = useRef<number | null>(null);
+
+  const syncQrAuthWindow = useCallback(async (snap: RobotSnapshotSummary) => {
+    const jobId = snap.activeJobId;
+    const stepId = snap.selectedJobStepId ?? null;
+    if (!jobId || snap.selectedStepType !== 'AUTHENTICATE') {
+      return;
+    }
+    if (stepId && handledQrStepIdsRef.current.has(stepId)) {
+      return;
+    }
+    if (checkingQrRef.current) {
+      return;
+    }
+    checkingQrRef.current = true;
+    try {
+      const challenge = await robotApiService.getStaffQrScanWindow(jobId);
+      if (challenge) {
+        if (handledQrStepIdsRef.current.has(challenge.authJobStepId)) {
+          return;
+        }
+        setActiveQrWindow({
+          jobId: challenge.jobId,
+          authJobStepId: challenge.authJobStepId,
+          stepCode: snap.selectedStepCode ?? null,
+          purpose: challenge.purpose,
+          expiresAt: challenge.expiresAt,
+        });
+        return;
+      }
+
+      if (stepId) {
+        const jobStep = await robotMapService.checkJobQrStepStatus(jobId, stepId);
+        if (jobStep?.stepStatus === 'RUNNING') {
+          setActiveQrWindow({
+            jobId,
+            authJobStepId: stepId,
+            stepCode: snap.selectedStepCode ?? null,
+          });
+        }
+      }
+    } finally {
+      checkingQrRef.current = false;
+    }
+  }, []);
 
   const applySnapshotSummary = useCallback(
     (snap: RobotSnapshotSummary, targetMapId: string) => {
@@ -108,8 +171,12 @@ export function PatientHubScreen({ navigation }: Props) {
       } else {
         setBackendGuidance(null);
       }
+
+      if (snap.activeJobId && snap.selectedStepType === 'AUTHENTICATE') {
+        void syncQrAuthWindow(snap);
+      }
     },
-    []
+    [syncQrAuthWindow]
   );
 
   // Tải gói dữ liệu Bản đồ lúc khởi tạo (tái sử dụng snapshot ban đầu, tránh gọi trùng)
@@ -151,9 +218,9 @@ export function PatientHubScreen({ navigation }: Props) {
   }, [applySnapshotSummary]);
 
   // Poll thông minh theo chu kỳ setTimeout nối tiếp (2.5s khi chạy, 8s khi IDLE),
-  // chỉ chạy khi app active + màn hình Map đang focus, có in-flight lock chống gọi trùng
+  // chỉ chạy khi app active + màn hình Map đang focus + không ở màn camera QR
   useEffect(() => {
-    if (!isMapLoaded || !isFocused || !isAppActive) {
+    if (!isMapLoaded || !isFocused || !isAppActive || activeQrWindow !== null) {
       return;
     }
 
@@ -196,7 +263,7 @@ export function PatientHubScreen({ navigation }: Props) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeMap.mapId, applySnapshotSummary, isAppActive, isFocused, isMapLoaded]);
+  }, [activeMap.mapId, activeQrWindow, applySnapshotSummary, isAppActive, isFocused, isMapLoaded]);
 
   const mapEndpoints = useMemo(() => {
     const filtered = endpoints.filter(
@@ -245,8 +312,8 @@ export function PatientHubScreen({ navigation }: Props) {
     });
   }, [backendGuidance, plannedPath, robotPose, activeDestinationLabel]);
 
-  // Nút duy nhất cho phép thao tác trên màn hình: Cấp cứu SOS
-  const handleEmergencySos = () => {
+  // Nút SOS hình tròn nổi (kéo thả tự do trên màn hình)
+  const handleEmergencySos = useCallback(() => {
     const hasValidCoords =
       robotPose &&
       typeof robotPose.xM === 'number' &&
@@ -273,127 +340,173 @@ export function PatientHubScreen({ navigation }: Props) {
       roomName,
       destinationName: roomName,
     });
-  };
+  }, [
+    activeDestinationEndpoint?.endpointCode,
+    activeDestinationLabel,
+    activeMap?.mapId,
+    guidance,
+    navigation,
+    plannedPath,
+    robotPose,
+  ]);
+
+  const handleQrCompleteOrDismiss = useCallback((stepId: string | null) => {
+    if (stepId) {
+      handledQrStepIdsRef.current.add(stepId);
+    }
+    setActiveQrWindow(null);
+  }, []);
 
   const hasActiveRoute = Boolean(plannedPath || (guidance && guidance.state !== 'IDLE'));
+  const padTop = Math.max(insets.top, spacing.sm);
+  const padBottom = Math.max(insets.bottom, spacing.sm);
+  const padLeft = Math.max(insets.left, spacing.lg);
+  const padRight = Math.max(insets.right, spacing.lg);
 
   return (
     <View
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        if (width > 0 && height > 0) {
+          setRootBounds((prev) =>
+            prev.width === width && prev.height === height ? prev : { width, height }
+          );
+        }
+      }}
       style={[
         styles.landscapeRoot,
         {
-          paddingTop: Math.max(insets.top, spacing.sm),
-          paddingBottom: Math.max(insets.bottom, spacing.sm),
-          paddingLeft: Math.max(insets.left, spacing.lg),
-          paddingRight: Math.max(insets.right, spacing.lg),
+          paddingTop: padTop,
+          paddingBottom: padBottom,
+          paddingLeft: padLeft,
+          paddingRight: padRight,
         },
       ]}
     >
-      {/* ======================================================== */}
-      {/* CỘT TRÁI: BẢN ĐỒ CHỈ XEM VỊ TRÍ ROBOT & PATH CHỈ ĐƯỜNG    */}
-      {/* ======================================================== */}
-      <View style={styles.landscapeMapColumn}>
-        <View style={styles.mapCard}>
-          <BackendHospitalMap
-            interactive={false}
-            skipImageFetch={!isMapLoaded}
-            map={activeMap}
-            metadata={mapMetadata}
-            endpoints={endpoints}
-            zones={zones}
-            presentation={presentationDoc}
-            token={authToken}
-            selectedEndpointId={hasActiveRoute ? planEndpointId : null}
-            robotPose={robotPose}
-            isPoseLive={isPoseLive}
-            plannedPath={plannedPath}
-            guidance={guidance}
-          />
-        </View>
-      </View>
-
-      {/* ======================================================== */}
-      {/* CỘT PHẢI: NÚT CẤP CỨU SOS & THÔNG TIN CHỈ ĐỌC             */}
-      {/* ======================================================== */}
-      <View style={styles.landscapeControlColumn}>
-        {/* Nút bấm duy nhất trên màn hình: CẤP CỨU SOS */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cấp cứu SOS gọi điều dưỡng khẩn cấp"
-          onPress={handleEmergencySos}
-          style={({ pressed }) => [
-            styles.sosButton,
-            pressed && styles.sosButtonPressed,
-          ]}
-        >
-          <View style={styles.sosIconCircle}>
-            <Ionicons name="alert-circle" size={26} color={colors.danger} />
-          </View>
-          <View style={styles.actionTextCol}>
-            <AppText style={styles.sosTitle}>CẤP CỨU SOS</AppText>
-            <AppText style={styles.sosSubtitle}>Gọi Điều dưỡng ngay</AppText>
-          </View>
-        </Pressable>
-
-        {/* Bảng lộ trình chỉ đọc (không có thao tác chạm) */}
-        <ScrollView
-          style={styles.infoScroll}
-          contentContainerStyle={styles.infoScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Lộ trình & Chỉ dẫn hiện tại (chỉ đọc từ Backend) */}
-          <View style={styles.infoCard}>
-            <View style={styles.cardHeaderRow}>
-              <View style={styles.sectionIconSquare}>
-                <Ionicons name="trail-sign" size={15} color={colors.textInverse} />
-              </View>
-              <AppText variant="caption" style={styles.cardHeaderTitle}>
-                LỘ TRÌNH CHỈ ĐƯỜNG
-              </AppText>
+      {activeQrWindow ? (
+        <QrStaffCameraOverlay
+          jobId={activeQrWindow.jobId}
+          authJobStepId={activeQrWindow.authJobStepId}
+          stepCode={activeQrWindow.stepCode}
+          purpose={activeQrWindow.purpose}
+          expiresAt={activeQrWindow.expiresAt}
+          active={isFocused && isAppActive}
+          onSuccessComplete={handleQrCompleteOrDismiss}
+          onDismiss={handleQrCompleteOrDismiss}
+        />
+      ) : (
+        <>
+          {/* ======================================================== */}
+          {/* CỘT TRÁI: BẢN ĐỒ OTTO AMR CHỈ XEM VỊ TRÍ & PATH          */}
+          {/* ======================================================== */}
+          <View style={styles.landscapeMapColumn}>
+            <View style={styles.mapCard}>
+              <BackendHospitalMap
+                interactive={false}
+                skipImageFetch={!isMapLoaded}
+                showEndpoints={false}
+                map={activeMap}
+                metadata={mapMetadata}
+                endpoints={endpoints}
+                zones={zones}
+                presentation={presentationDoc}
+                token={authToken}
+                selectedEndpointId={hasActiveRoute ? planEndpointId : null}
+                robotPose={robotPose}
+                isPoseLive={isPoseLive}
+                plannedPath={plannedPath}
+                guidance={guidance}
+              />
             </View>
+          </View>
 
-            {hasActiveRoute ? (
-              <View style={styles.routeActiveBox}>
-                <View style={styles.roomDetailBox}>
-                  {activeDestinationEndpoint?.endpointCode ? (
-                    <View style={styles.roomCodePill}>
-                      <AppText style={styles.roomCodePillText}>
-                        {activeDestinationEndpoint.endpointCode}
-                      </AppText>
-                    </View>
-                  ) : null}
-                  <View style={{ flex: 1 }}>
-                    <AppText variant="heading" style={styles.roomNameText} numberOfLines={2}>
-                      {activeDestinationLabel}
-                    </AppText>
+          {/* ======================================================== */}
+          {/* CỘT PHẢI: TOÀN BỘ KHÔNG GIAN DÀNH CHO LỘ TRÌNH CHỈ ĐƯỜNG */}
+          {/* ======================================================== */}
+          <View style={styles.landscapeControlColumn}>
+            <ScrollView
+              style={styles.infoScroll}
+              contentContainerStyle={styles.infoScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.infoCard}>
+                <View style={styles.cardHeaderRow}>
+                  <View style={styles.sectionIconSquare}>
+                    <Ionicons name="trail-sign" size={16} color={colors.textInverse} />
                   </View>
-                </View>
-
-                {guidance ? (
-                  <View style={styles.guidancePreviewBox}>
-                    <AppText style={styles.guidancePrimaryText}>{guidance.primaryText}</AppText>
-                    {guidance.secondaryText ? (
-                      <AppText variant="caption" style={styles.guidanceSecondaryText}>
-                        {guidance.secondaryText}
-                      </AppText>
-                    ) : null}
-                  </View>
-                ) : null}
-              </View>
-            ) : (
-              <View style={styles.idleRouteNotice}>
-                <Ionicons name="eye-outline" size={18} color={colors.textSecondary} />
-                <View style={{ flex: 1, gap: 2 }}>
-                  <AppText style={styles.idleNoticeTitle}>Chưa có lộ trình chỉ đường</AppText>
-                  <AppText variant="caption" style={styles.idleNoticeSub}>
-                    Bản đồ ở chế độ chỉ xem vị trí và đường dẫn khi có lệnh từ hệ thống.
+                  <AppText variant="caption" style={styles.cardHeaderTitle}>
+                    LỘ TRÌNH CHỈ ĐƯỜNG
                   </AppText>
                 </View>
+
+                {hasActiveRoute ? (
+                  <View style={styles.routeActiveBox}>
+                    <View style={styles.roomDetailBox}>
+                      {activeDestinationEndpoint?.endpointCode ? (
+                        <View style={styles.roomCodePill}>
+                          <AppText style={styles.roomCodePillText}>
+                            {activeDestinationEndpoint.endpointCode}
+                          </AppText>
+                        </View>
+                      ) : null}
+                      <View style={{ flex: 1 }}>
+                        <AppText variant="heading" style={styles.roomNameText} numberOfLines={2}>
+                          {activeDestinationLabel}
+                        </AppText>
+                      </View>
+                    </View>
+
+                    {guidance ? (
+                      <View style={styles.guidancePreviewBox}>
+                        <View style={styles.guidanceDirectionRow}>
+                          <View style={styles.guidanceSymbolBadge}>
+                            <AppText style={styles.guidanceSymbolText}>
+                              {guidance.state === 'ARRIVED'
+                                ? '✓'
+                                : guidanceSymbol(guidance.direction)}
+                            </AppText>
+                          </View>
+                          <View style={{ flex: 1, gap: 4 }}>
+                            <AppText style={styles.guidancePrimaryText}>
+                              {guidance.primaryText}
+                            </AppText>
+                            {guidance.secondaryText ? (
+                              <AppText variant="caption" style={styles.guidanceSecondaryText}>
+                                {guidance.secondaryText}
+                              </AppText>
+                            ) : null}
+                          </View>
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : (
+                  <View style={styles.idleRouteNotice}>
+                    <Ionicons name="eye-outline" size={20} color={colors.textSecondary} />
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <AppText style={styles.idleNoticeTitle}>Chưa có lộ trình chỉ đường</AppText>
+                      <AppText variant="caption" style={styles.idleNoticeSub}>
+                        Bản đồ đang hiển thị vị trí robot theo thời gian thực. Khi nhận nhiệm vụ dẫn đường hoặc giao hàng, lộ trình chỉ dẫn sẽ tự động hiện tại đây.
+                      </AppText>
+                    </View>
+                  </View>
+                )}
               </View>
-            )}
+            </ScrollView>
           </View>
-        </ScrollView>
-      </View>
+        </>
+      )}
+
+      {/* Nút SOS hình tròn nổi, có thể kéo di chuyển tự do trên màn hình tablet */}
+      <DraggableSosButton
+        onPress={handleEmergencySos}
+        boundsWidth={rootBounds.width}
+        boundsHeight={rootBounds.height}
+        insetTop={padTop}
+        insetBottom={padBottom}
+        insetLeft={padLeft}
+        insetRight={padRight}
+      />
     </View>
   );
 }
@@ -403,6 +516,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     backgroundColor: colors.background,
+    position: 'relative',
   },
   landscapeMapColumn: {
     flex: 2.3,
@@ -426,57 +540,16 @@ const styles = StyleSheet.create({
   landscapeControlColumn: {
     flex: 1,
     height: '100%',
-    gap: spacing.md,
-  },
-  sosButton: {
-    minHeight: 70,
-    backgroundColor: colors.danger,
-    borderRadius: radii.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    shadowColor: colors.danger,
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.28,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  sosButtonPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.985 }],
-  },
-  sosIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  actionTextCol: {
-    flex: 1,
-  },
-  sosTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  sosSubtitle: {
-    color: '#FEE2E2',
-    fontSize: 12.5,
-    fontWeight: '600',
   },
   infoScroll: {
     flex: 1,
   },
   infoScrollContent: {
-    gap: spacing.md,
-    paddingBottom: spacing.md,
+    flexGrow: 1,
+    paddingBottom: 92,
   },
   infoCard: {
+    flex: 1,
     backgroundColor: colors.surface,
     borderRadius: radii.xl,
     padding: spacing.lg,
@@ -496,10 +569,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   sectionIconSquare: {
-    width: 26,
-    height: 26,
+    width: 28,
+    height: 28,
     borderRadius: radii.xs,
-    backgroundColor: colors.hero,
+    backgroundColor: colors.heroSurface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -510,7 +583,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   routeActiveBox: {
-    gap: spacing.sm,
+    gap: spacing.md,
   },
   roomDetailBox: {
     flexDirection: 'row',
@@ -523,7 +596,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderMuted,
   },
   roomCodePill: {
-    backgroundColor: colors.hero,
+    backgroundColor: colors.heroSurface,
     paddingHorizontal: spacing.sm + 2,
     paddingVertical: spacing.xs + 2,
     borderRadius: radii.sm,
@@ -536,8 +609,8 @@ const styles = StyleSheet.create({
   roomNameText: {
     color: colors.textPrimary,
     fontWeight: '800',
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 18,
+    lineHeight: 24,
   },
   guidancePreviewBox: {
     backgroundColor: '#EFF6FF',
@@ -545,34 +618,54 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.md,
     padding: spacing.md,
-    gap: 2,
+  },
+  guidanceDirectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  guidanceSymbolBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: radii.md,
+    backgroundColor: '#0757A6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guidanceSymbolText: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
   },
   guidancePrimaryText: {
     color: '#1E3A8A',
-    fontSize: 14.5,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 22,
   },
   guidanceSecondaryText: {
     color: '#1D4ED8',
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '600',
   },
   idleRouteNotice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
     backgroundColor: colors.surfaceMuted,
-    padding: spacing.md,
+    padding: spacing.lg,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.borderMuted,
   },
   idleNoticeTitle: {
     color: colors.textPrimary,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
   },
   idleNoticeSub: {
     color: colors.textSecondary,
-    lineHeight: 18,
+    fontSize: 13,
+    lineHeight: 20,
   },
 });

@@ -296,8 +296,42 @@ export interface RobotSnapshotSummary {
   sessionId?: string | null;
   sessionState?: string | null;
   activeJobId?: string | null;
+  selectedJobStepId?: string | null;
+  selectedStepType?: string | null;
+  selectedStepCode?: string | null;
   dispatchReady?: boolean;
   snapshotReachable?: boolean;
+}
+
+export interface JobCameraPreviewFrame {
+  status: number;
+  dataUri: string | null;
+  capturedAt: string | null;
+  revision: string | null;
+  errorMessage?: string;
+}
+
+export interface JobQrStepStatusResult {
+  jobStatus: string;
+  stepStatus: string | null;
+  verified: boolean;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let result = '';
+  const len = bytes.length;
+  for (let i = 0; i < len; i += 3) {
+    const b1 = bytes[i] ?? 0;
+    const b2 = i + 1 < len ? (bytes[i + 1] ?? 0) : 0;
+    const b3 = i + 2 < len ? (bytes[i + 2] ?? 0) : 0;
+    result += chars[b1 >> 2] ?? '';
+    result += chars[((b1 & 3) << 4) | (b2 >> 4)] ?? '';
+    result += i + 1 < len ? (chars[((b2 & 15) << 2) | (b3 >> 6)] ?? '') : '=';
+    result += i + 2 < len ? (chars[b3 & 63] ?? '') : '=';
+  }
+  return result;
 }
 
 function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummary {
@@ -381,6 +415,9 @@ function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummar
     sessionId: snapshot?.navigationSession?.sessionId || null,
     sessionState: snapshot?.navigationSession?.state || null,
     activeJobId: snapshot?.activeJobId || null,
+    selectedJobStepId: snapshot?.selectedJobStepId || null,
+    selectedStepType: snapshot?.selectedStepType || null,
+    selectedStepCode: snapshot?.selectedStepCode || null,
     dispatchReady: Boolean(snapshot?.dispatchReady),
     snapshotReachable: true,
   };
@@ -745,9 +782,124 @@ class RobotMapService {
       navigationPlan: null,
       backendGuidance: null,
       activeJobId: null,
+      selectedJobStepId: null,
+      selectedStepType: null,
+      selectedStepCode: null,
       dispatchReady: false,
       snapshotReachable: false,
     };
+  }
+
+  /**
+   * Lấy khung hình camera mới nhất của robot từ server: GET /api/v1/jobs/{jobId}/camera-preview.jpg
+   */
+  public async fetchJobCameraPreview(jobId: string): Promise<JobCameraPreviewFrame> {
+    const token = await this.getViewerToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4_000);
+
+    try {
+      const res = await fetch(
+        `${REMOTE_API_BASE}/jobs/${encodeURIComponent(jobId)}/camera-preview.jpg`,
+        {
+          headers: { ...headers, Accept: 'image/jpeg' },
+          signal: controller.signal,
+        }
+      );
+
+      if (res.status === 401) {
+        cachedViewerToken = null;
+        tokenExpiresAt = 0;
+      }
+
+      if (res.status === 200) {
+        const buffer = await res.arrayBuffer();
+        const b64 = arrayBufferToBase64(buffer);
+        return {
+          status: 200,
+          dataUri: b64 ? `data:image/jpeg;base64,${b64}` : null,
+          capturedAt: res.headers.get('X-Captured-At') || res.headers.get('x-captured-at'),
+          revision: res.headers.get('X-Frame-Revision') || res.headers.get('x-frame-revision'),
+        };
+      }
+
+      if (res.status === 204) {
+        return {
+          status: 204,
+          dataUri: null,
+          capturedAt: null,
+          revision: null,
+          errorMessage: 'Đang chờ khung hình camera mới từ máy chủ...',
+        };
+      }
+
+      const text = await res.text().catch(() => '');
+      return {
+        status: res.status,
+        dataUri: null,
+        capturedAt: null,
+        revision: null,
+        errorMessage:
+          res.status === 404
+            ? 'Server chưa bật luồng /camera-preview.jpg cho Job giao nhận (HTTP 404).'
+            : text || `HTTP ${res.status}`,
+      };
+    } catch (err: unknown) {
+      return {
+        status: 0,
+        dataUri: null,
+        capturedAt: null,
+        revision: null,
+        errorMessage: err instanceof Error ? err.message : 'Lỗi kết nối camera server.',
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Kiểm tra xác thực bước AUTHENTICATE QR trên Job qua GET /api/v1/jobs/{jobId}
+   */
+  public async checkJobQrStepStatus(
+    jobId: string,
+    stepId?: string | null
+  ): Promise<JobQrStepStatusResult | null> {
+    const token = await this.getViewerToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+    try {
+      const res = await fetch(`${REMOTE_API_BASE}/jobs/${encodeURIComponent(jobId)}`, {
+        headers: { ...headers, Accept: 'application/json' },
+      });
+      if (res.status === 401) {
+        cachedViewerToken = null;
+        tokenExpiresAt = 0;
+      }
+      if (!res.ok) return null;
+
+      const detail = await res.json();
+      const jobStatus = String(detail?.job?.status || '');
+      const steps: any[] = Array.isArray(detail?.steps) ? detail.steps : [];
+      const targetStep =
+        (stepId ? steps.find((s) => s?.jobStepId === stepId) : undefined) ||
+        steps.find((s) => s?.stepTypeSnapshot === 'AUTHENTICATE');
+
+      const stepStatus = targetStep?.status ? String(targetStep.status) : null;
+      const resultJson = targetStep?.resultJson;
+      const verifiedByResult = Boolean(
+        resultJson && (resultJson.verified === true || resultJson.authenticated === true)
+      );
+      const verified = stepStatus === 'SUCCEEDED' || verifiedByResult;
+
+      return {
+        jobStatus,
+        stepStatus,
+        verified,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**

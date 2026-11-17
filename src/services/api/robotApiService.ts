@@ -29,7 +29,45 @@ import {
   HospitalInformationResponse,
   CameraVerifyRequest,
   StaffQrScanWindow,
+  DeviceMediaSessionEvent,
 } from './types';
+
+export function parseSseMediaEventsChunk(buffer: string): {
+  events: DeviceMediaSessionEvent[];
+  remainder: string;
+} {
+  const normalized = buffer.replace(/\r\n/g, '\n');
+  const blocks = normalized.split('\n\n');
+  const remainder = blocks.pop() ?? '';
+  const events: DeviceMediaSessionEvent[] = [];
+
+  for (const block of blocks) {
+    if (!block.trim()) continue;
+    const dataLines: string[] = [];
+    for (const rawLine of block.split('\n')) {
+      if (!rawLine || rawLine.startsWith(':')) continue;
+      if (rawLine.startsWith('data:')) {
+        dataLines.push(rawLine.slice(5).trimStart());
+      }
+    }
+    if (dataLines.length === 0) continue;
+    const jsonText = dataLines.join('\n').trim();
+    if (!jsonText) continue;
+    try {
+      const parsed = JSON.parse(jsonText) as Partial<DeviceMediaSessionEvent>;
+      if (typeof parsed === 'object' && parsed !== null) {
+        events.push({
+          enabled: Boolean(parsed.enabled),
+          session: parsed.session ?? null,
+        });
+      }
+    } catch {
+      // Ignore malformed/non-JSON SSE frames
+    }
+  }
+
+  return { events, remainder };
+}
 
 function roundCoordMeters(value: number): number {
   const rounded = Number(value.toFixed(4));
@@ -189,30 +227,198 @@ class RobotApiService {
    * 5b. Device Media Session (Kiểm tra phiên đàm thoại LiveKit của Robot từ Pi)
    * GET /api/v1/pi/media-session
    */
-  public async getDeviceMediaSession(): Promise<{
-    enabled: boolean;
-    session?: {
-      sessionId: string;
-      robotId?: string;
-      incidentId?: string;
-      staffAccountId?: string;
-      mode?: string;
-      state: 'RINGING' | 'ACTIVE' | 'ENDED' | string;
-      createdAt?: string;
-      expiresAt?: string;
-      endedAt?: string;
-      endReason?: string;
-    } | null;
-  } | null> {
+  public async getDeviceMediaSession(): Promise<DeviceMediaSessionEvent | null> {
     try {
-      await apiClient.ensureDeviceToken();
-      return await apiClient.request<{
-        enabled: boolean;
-        session?: any;
-      }>('/api/v1/pi/media-session');
+      const token = await apiClient.ensureDeviceToken();
+      if (!token) return null;
+      return await apiClient.request<DeviceMediaSessionEvent>('/api/v1/pi/media-session');
     } catch {
       return null;
     }
+  }
+
+  /**
+   * 5c. Đăng ký nhận sự kiện phiên đàm thoại theo thời gian thực qua SSE
+   * GET /api/v1/pi/media-session/events
+   */
+  public subscribeDeviceMediaEvents(
+    onEvent: (event: DeviceMediaSessionEvent) => void,
+    onError?: (err: unknown) => void,
+  ): () => void {
+    let closed = false;
+    const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    let activeXhr: XMLHttpRequest | null = null;
+
+    const emitParsedChunk = (chunkText: string, prevBuffer: string): string => {
+      if (!chunkText) return prevBuffer;
+      const { events, remainder } = parseSseMediaEventsChunk(prevBuffer + chunkText);
+      for (const evt of events) {
+        if (closed) break;
+        onEvent(evt);
+      }
+      return remainder;
+    };
+
+    const startXhrStream = (url: string, token: string): boolean => {
+      if (typeof XMLHttpRequest === 'undefined') return false;
+      const xhr = new XMLHttpRequest();
+      activeXhr = xhr;
+      let offset = 0;
+      let buffer = '';
+
+      const drainIncremental = () => {
+        if (closed) return;
+        const text = xhr.responseText || '';
+        if (text.length <= offset) return;
+        const slice = text.slice(offset);
+        offset = text.length;
+        buffer = emitParsedChunk(slice, buffer);
+      };
+
+      const clearHandlers = () => {
+        xhr.onreadystatechange = null;
+        xhr.onprogress = null;
+        xhr.onerror = null;
+      };
+
+      xhr.open('GET', url, true);
+      xhr.setRequestHeader('Accept', 'text/event-stream');
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.setRequestHeader('Cache-Control', 'no-cache');
+      xhr.setRequestHeader('X-Request-ID', generateUuid());
+
+      xhr.onprogress = drainIncremental;
+      xhr.onreadystatechange = () => {
+        if (closed) return;
+        if (xhr.readyState === 3 || xhr.readyState === 4) {
+          if (xhr.readyState === 4 && xhr.status >= 400) {
+            clearHandlers();
+            onError?.(new Error(`SSE error HTTP ${xhr.status}`));
+            return;
+          }
+          drainIncremental();
+          if (xhr.readyState === 4) {
+            if (buffer.trim()) {
+              emitParsedChunk('\n\n', buffer);
+              buffer = '';
+            }
+            clearHandlers();
+          }
+        }
+      };
+      xhr.onerror = () => {
+        clearHandlers();
+        if (!closed) {
+          onError?.(new Error('SSE stream connection error'));
+        }
+      };
+
+      try {
+        xhr.send();
+        return true;
+      } catch (err) {
+        clearHandlers();
+        if (!closed) onError?.(err);
+        return true;
+      }
+    };
+
+    const startFetchStream = async (url: string, token: string) => {
+      try {
+        const res = await fetch(url, {
+          method: 'GET',
+          headers: {
+            Accept: 'text/event-stream',
+            Authorization: `Bearer ${token}`,
+            'Cache-Control': 'no-cache',
+            'X-Request-ID': generateUuid(),
+          },
+          signal: abortController?.signal,
+        });
+
+        if (closed) return;
+        if (!res.ok) {
+          throw new Error(`SSE HTTP ${res.status}`);
+        }
+
+        const reader = res.body?.getReader?.();
+        if (!reader) {
+          const fullText = await res.text();
+          if (!closed && fullText) {
+            emitParsedChunk('\n\n', emitParsedChunk(fullText, ''));
+          }
+          return;
+        }
+
+        const decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
+        let buffer = '';
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (closed) {
+            void reader.cancel().catch(() => undefined);
+            break;
+          }
+          if (done) break;
+          const chunk = value
+            ? decoder
+              ? decoder.decode(value, { stream: true })
+              : String.fromCharCode(...value)
+            : '';
+          buffer = emitParsedChunk(chunk, buffer);
+        }
+        if (!closed && decoder) {
+          buffer = emitParsedChunk(decoder.decode(), buffer);
+        }
+        if (!closed && buffer.trim()) {
+          emitParsedChunk('\n\n', buffer);
+        }
+      } catch (err: unknown) {
+        if (closed) return;
+        if (err instanceof Error && err.name === 'AbortError') return;
+        onError?.(err);
+      }
+    };
+
+    void (async () => {
+      try {
+        const token = await apiClient.ensureDeviceToken();
+        if (closed) return;
+        if (!token) {
+          onError?.(new Error('Device token unavailable'));
+          return;
+        }
+        const url = `${apiClient.getBaseUrl()}/api/v1/pi/media-session/events`;
+        const isReactNative =
+          typeof navigator !== 'undefined' && navigator.product === 'ReactNative';
+
+        if (isReactNative && startXhrStream(url, token)) {
+          return;
+        }
+        if (typeof fetch === 'function') {
+          await startFetchStream(url, token);
+          return;
+        }
+        startXhrStream(url, token);
+      } catch (err) {
+        if (!closed) onError?.(err);
+      }
+    })();
+
+    return () => {
+      closed = true;
+      abortController?.abort();
+      if (activeXhr) {
+        activeXhr.onreadystatechange = null;
+        activeXhr.onprogress = null;
+        activeXhr.onerror = null;
+        try {
+          activeXhr.abort();
+        } catch {
+          // Ignore XHR abort errors during teardown
+        }
+        activeXhr = null;
+      }
+    };
   }
 
   /**
@@ -492,12 +698,14 @@ class RobotApiService {
       const challenge = await apiClient.request<{
         challengeId?: string;
         authJobStepId?: string;
+        purpose?: 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
         expiresAt?: string;
       }>(`/api/v1/pi/jobs/${jobId}/qr-challenge`);
       if (!challenge || !challenge.authJobStepId) return null;
       return {
         jobId,
         authJobStepId: challenge.authJobStepId,
+        purpose: challenge.purpose,
         expiresAt: challenge.expiresAt ?? new Date(Date.now() + 600_000).toISOString(),
       };
     } catch {
