@@ -13,29 +13,20 @@ import { RootStackParamList } from '../../app/navigation';
 import { AppText, StatusChip } from '../../components/ui';
 import { AudioWaveform } from '../../components/AudioWaveform';
 import { apiClient, robotApiService } from '../../services/api';
-import { DeviceIncidentStatusResponse, SosRoutingStatus } from '../../services/api/types';
+import { SosRoutingStatus } from '../../services/api/types';
 import { generateUuid } from '../../services/api/config';
 import { colors, radii, spacing, typography } from '../../theme';
+import {
+  createSosCallController,
+  MediaCallState,
+  MedicalIncidentState,
+  SOS_UNANSWERED_NOTICE,
+  SosCallSnapshot,
+} from './sosCallController';
+
+export type { MediaCallState, MedicalIncidentState };
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Emergency'>;
-
-export type MedicalIncidentState =
-  | 'INITIALIZING'
-  | 'SENDING'
-  | 'SENT_WAITING'
-  | 'ACKNOWLEDGED'
-  | 'IN_PROGRESS'
-  | 'RESOLVED'
-  | 'CLOSED'
-  | 'FALSE_ALARM'
-  | 'FAILED';
-
-export type MediaCallState =
-  | 'WAITING_STAFF'
-  | 'CONNECTING_MEDIA'
-  | 'CONNECTED'
-  | 'MEDIA_ERROR'
-  | 'ENDED';
 
 export function SosCallScreen({ route, navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -43,215 +34,119 @@ export function SosCallScreen({ route, navigation }: Props) {
 
   const [callSeconds, setCallSeconds] = useState(0);
 
-  // 1. Quản lý trạng thái Sự cố (Incident Lifecycle) và trạng thái Cuộc gọi (Media Lifecycle) riêng biệt
-  const [incidentState, setIncidentState] = useState<MedicalIncidentState>('INITIALIZING');
-  const [callState, setCallState] = useState<MediaCallState>('WAITING_STAFF');
-  const [incidentId, setIncidentId] = useState<string | null>(null);
-  const [mediaSessionId, setMediaSessionId] = useState<string | null>(null);
-  const [sosRoutingStatus, setSosRoutingStatus] = useState<SosRoutingStatus | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isRetrying, setIsRetrying] = useState<boolean>(false);
-
-  // Stable operationKey cho toàn bộ phiên SOS (tái sử dụng khi bấm Thử lại)
+  // Stable operationKey cho một lần mở màn hình SOS (giữ nguyên khi bấm Thử lại)
   const operationKeyRef = useRef<string>(generateUuid());
-  const hasTriggeredRef = useRef(false);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const controllerRef = useRef<ReturnType<typeof createSosCallController> | null>(null);
 
   // Tọa độ định vị thực tế
   const hasValidCoords =
     typeof xM === 'number' && !isNaN(xM) && typeof yM === 'number' && !isNaN(yM);
 
+  const [snapshot, setSnapshot] = useState<SosCallSnapshot>(() => ({
+    incidentState: 'INITIALIZING',
+    callState: 'WAITING_STAFF',
+    incidentId: null,
+    robotId: apiClient.getRobotId(),
+    mediaSessionId: null,
+    sosRoutingStatus: null,
+    errorMessage: null,
+    unansweredNotice: null,
+    isRingingSession: false,
+    isRetrying: false,
+    operationKey: operationKeyRef.current,
+    apiLogs: {
+      lastCall: 'POST /api/v1/pi/incidents/sos',
+      lastResult: 'Chuẩn bị gửi tín hiệu cấp cứu SOS...',
+      status: 'READY',
+      latencyMs: 0,
+    },
+  }));
+
+  const {
+    incidentState,
+    callState,
+    incidentId,
+    mediaSessionId,
+    sosRoutingStatus,
+    errorMessage,
+    unansweredNotice,
+    isRingingSession,
+    isRetrying,
+    apiLogs,
+  } = snapshot;
+
   // Telemetry Console Inspector
   const [showApiConsole, setShowApiConsole] = useState(false);
-  const [apiLogs, setApiLogs] = useState<{
-    lastCall: string;
-    lastResult: string;
-    status: string;
-    latencyMs: number;
-  }>({
-    lastCall: 'POST /api/v1/pi/incidents/sos',
-    lastResult: 'Chuẩn bị gửi tín hiệu cấp cứu SOS...',
-    status: 'READY',
-    latencyMs: 0,
-  });
 
-  // 2. Gửi SOS tới BE với envelope EMERGENCY_SOS và operationKey ổn định
-  const sendSosRequest = async () => {
-    setIsRetrying(true);
-    setErrorMessage(null);
-    setIncidentState('SENDING');
-    setCallState('WAITING_STAFF');
-    const start = Date.now();
-
+  // Điều khiển vòng đời SOS: gửi 1 lần, theo dõi SSE + poll, tự quay về bản đồ nếu hết chuông
+  useEffect(() => {
     const desc = roomCode
       ? `Bệnh nhân gọi cấp cứu SOS tại sảnh (${roomCode})`
       : 'Bệnh nhân yêu cầu trợ giúp y tế khẩn cấp tại trạm Robot';
 
-    console.log('[SOS] Gửi POST /api/v1/pi/incidents/sos', {
-      baseUrl: apiClient.getBaseUrl(),
+    const controller = createSosCallController({
       operationKey: operationKeyRef.current,
-      hasValidCoords,
-      mapId: hasValidCoords && mapId ? mapId : undefined,
+      sosParams: {
+        description: desc,
+        severity: 'CRITICAL',
+        xM: hasValidCoords ? xM : undefined,
+        yM: hasValidCoords ? yM : undefined,
+        mapId: hasValidCoords && mapId ? mapId : undefined,
+      },
+      deps: {
+        triggerSos: (params) =>
+          robotApiService.triggerSos(
+            params.description,
+            params.severity,
+            params.xM,
+            params.yM,
+            params.mapId,
+            params.operationKey,
+          ),
+        getIncidentStatus: (id) => robotApiService.getIncidentStatus(id),
+        getDeviceMediaSession: () => robotApiService.getDeviceMediaSession(),
+        subscribeMediaEvents: (onEvent, onError) =>
+          robotApiService.subscribeDeviceMediaEvents(onEvent, onError),
+        getRobotId: () => apiClient.getRobotId(),
+      },
+      onStateChange: setSnapshot,
+      onNavigateBackToMap: () => {
+        navigation.navigate('Home');
+      },
     });
 
-    try {
-      const res = await robotApiService.triggerSos(
-        desc,
-        'CRITICAL',
-        hasValidCoords ? xM : undefined,
-        hasValidCoords ? yM : undefined,
-        hasValidCoords && mapId ? mapId : undefined,
-        operationKeyRef.current,
-      );
+    controllerRef.current = controller;
+    setSnapshot(controller.getSnapshot());
+    controller.start();
 
-      const latency = Date.now() - start;
-      const assignedId = res?.incident?.incidentId;
-
-      if (!assignedId) {
-        throw new Error('Máy chủ không trả về mã sự cố incidentId hợp lệ');
+    return () => {
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
       }
+      controller.dispose();
+    };
+  }, [hasValidCoords, mapId, navigation, roomCode, xM, yM]);
 
-      setIncidentId(assignedId);
-      setSosRoutingStatus(res?.incident?.sosRoutingStatus ?? null);
-      setIncidentState('SENT_WAITING');
-      setCallState('WAITING_STAFF');
-      setApiLogs({
-        lastCall: 'POST /api/v1/pi/incidents/sos',
-        lastResult: JSON.stringify(res),
-        status: '200 OK',
-        latencyMs: latency,
-      });
-      console.log('[SOS] Thành công:', {
-        incidentId: assignedId,
-        sosRoutingStatus: res?.incident?.sosRoutingStatus ?? null,
-        latencyMs: latency,
-      });
-    } catch (err: unknown) {
-      const latency = Date.now() - start;
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn('[SOS] Gửi thất bại:', msg);
-      setIncidentState('FAILED');
-      setCallState('MEDIA_ERROR');
-      setErrorMessage(msg);
-      setApiLogs({
-        lastCall: 'POST /api/v1/pi/incidents/sos',
-        lastResult: `Lỗi gửi SOS: ${msg}`,
-        status: 'FAILED',
-        latencyMs: latency,
-      });
-    } finally {
-      setIsRetrying(false);
-    }
-  };
-
-  // 3. Tự động gửi SOS một lần duy nhất khi mount
+  // Timer đếm giây mở màn hình SOS
   useEffect(() => {
-    if (hasTriggeredRef.current) return;
-    hasTriggeredRef.current = true;
-    sendSosRequest();
-  }, []);
-
-  // 4. Timer đếm giây mở màn hình SOS
-  useEffect(() => {
+    if (callState === 'RING_TIMED_OUT') return;
     const timer = setInterval(() => {
       setCallSeconds((prev) => prev + 1);
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [callState]);
 
-  // 5. Polling kiểm tra trạng thái Incident thật và kiểm tra trạng thái Media Session từ BE
-  useEffect(() => {
-    if (!incidentId) return;
-    if (
-      incidentState === 'RESOLVED' ||
-      incidentState === 'CLOSED' ||
-      incidentState === 'FALSE_ALARM'
-    ) {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      setCallState('ENDED');
+  const sendSosRequest = () => {
+    controllerRef.current?.retry();
+  };
+
+  // Thoát màn hình SOS - KHÔNG đóng hồ sơ SOS trên BE và KHÔNG gửi /resolve hay /close
+  const handleEndCall = () => {
+    if (controllerRef.current) {
+      controllerRef.current.exit();
       return;
     }
-
-    pollIntervalRef.current = setInterval(async () => {
-      const start = Date.now();
-      try {
-        // a) Kiểm tra trạng thái sự cố y tế
-        const statusRes: DeviceIncidentStatusResponse =
-          await robotApiService.getIncidentStatus(incidentId);
-
-        setApiLogs({
-          lastCall: `GET /api/v1/pi/incidents/${incidentId.slice(0, 8)}...`,
-          lastResult: JSON.stringify(statusRes),
-          status: '200 OK',
-          latencyMs: Date.now() - start,
-        });
-
-        const s = statusRes.status;
-        if (s === 'OPEN' || s === 'REPORTED') {
-          setIncidentState('SENT_WAITING');
-        } else if (s === 'ACKNOWLEDGED') {
-          setIncidentState('ACKNOWLEDGED');
-        } else if (s === 'IN_PROGRESS') {
-          setIncidentState('IN_PROGRESS');
-        } else if (s === 'RESOLVED') {
-          setIncidentState('RESOLVED');
-          setCallState('ENDED');
-        } else if (s === 'CLOSED') {
-          setIncidentState('CLOSED');
-          setCallState('ENDED');
-        } else if (s === 'FALSE_ALARM') {
-          setIncidentState('FALSE_ALARM');
-          setCallState('ENDED');
-        }
-
-        // b) Kiểm tra trạng thái cuộc gọi đàm thoại (Media Session trên Pi / LiveKit)
-        try {
-          const mediaRes = await robotApiService.getDeviceMediaSession();
-          if (mediaRes?.session) {
-            setMediaSessionId(mediaRes.session.sessionId);
-            const mState = mediaRes.session.state;
-            if (mState === 'ACTIVE') {
-              setCallState('CONNECTED');
-            } else if (mState === 'RINGING') {
-              setCallState('CONNECTING_MEDIA');
-            } else if (mState === 'ENDED') {
-              setCallState('ENDED');
-            }
-          } else {
-            // Chưa có phiên media session riêng
-            if (s === 'ACKNOWLEDGED' || s === 'IN_PROGRESS') {
-              // Nhân viên y tế đã ACK sự cố, đang chuẩn bị kết nối đàm thoại
-              setCallState((prev) => (prev === 'CONNECTED' ? 'CONNECTED' : 'CONNECTING_MEDIA'));
-            } else if (['RESOLVED', 'CLOSED', 'FALSE_ALARM'].includes(s)) {
-              setCallState('ENDED');
-            } else {
-              setCallState('WAITING_STAFF');
-            }
-          }
-        } catch {
-          // Media session check silent catch
-        }
-      } catch (err: unknown) {
-        const pollErrMsg = err instanceof Error ? err.message : String(err);
-        console.warn('[SOS] Polling lỗi:', pollErrMsg);
-        setApiLogs((prev) => ({
-          ...prev,
-          lastCall: `GET /api/v1/pi/incidents/${incidentId.slice(0, 8)}...`,
-          lastResult: `Polling error: ${pollErrMsg}`,
-          status: 'POLL_ERR',
-        }));
-      }
-    }, 2500);
-
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
-  }, [incidentId, incidentState]);
-
-  // Thoát màn hình SOS - KHÔNG gửi heartbeat IDLE theo quy tắc an toàn
-  const handleEndCall = () => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    navigation.goBack();
+    navigation.navigate('Home');
   };
 
   const formatTimer = (totalSecs: number) => {
@@ -278,7 +173,7 @@ export function SosCallScreen({ route, navigation }: Props) {
           subtitle: 'Tín hiệu đã tới máy chủ. Đang chờ nhân viên trực bấm nhận.',
           badgeText: 'SỰ CỐ: Chờ tiếp nhận',
           badgeColor: colors.mapRoute,
-          isWorking: true,
+          isWorking: callState !== 'RING_TIMED_OUT',
         };
       case 'ACKNOWLEDGED':
         return {
@@ -335,17 +230,24 @@ export function SosCallScreen({ route, navigation }: Props) {
   const getCallDetails = () => {
     switch (callState) {
       case 'WAITING_STAFF':
-        return {
-          badgeText: 'CUỘC GỌI: Chờ nhân viên mở máy',
-          badgeColor: colors.textSecondary,
-          statusText: 'Đang chờ điều dưỡng trực mở kênh đàm thoại...',
-          showWave: false,
-        };
+        return isRingingSession
+          ? {
+              badgeText: 'CUỘC GỌI: Đang đổ chuông...',
+              badgeColor: colors.warningText,
+              statusText: 'Đang đổ chuông tới nhân viên phụ trách · Chờ bắt máy...',
+              showWave: false,
+            }
+          : {
+              badgeText: 'CUỘC GỌI: Chờ nhân viên bắt máy',
+              badgeColor: colors.textSecondary,
+              statusText: 'Đang chờ nhân viên phụ trách mở kênh đàm thoại...',
+              showWave: false,
+            };
       case 'CONNECTING_MEDIA':
         return {
-          badgeText: 'CUỘC GỌI: Đang kết nối media...',
+          badgeText: 'CUỘC GỌI: Nhân viên đã bắt máy',
           badgeColor: colors.warningText,
-          statusText: 'Đang thiết lập cầu nối LiveKit & âm thanh trên Robot (Pi)...',
+          statusText: 'Nhân viên đã bắt máy · Đang kết nối âm thanh trên Robot (Pi)...',
           showWave: true,
         };
       case 'CONNECTED':
@@ -354,6 +256,13 @@ export function SosCallScreen({ route, navigation }: Props) {
           badgeColor: '#10B981',
           statusText: 'Đàm thoại 2 chiều đang hoạt động (Mic & Loa trên Pi)',
           showWave: true,
+        };
+      case 'RING_TIMED_OUT':
+        return {
+          badgeText: 'CUỘC GỌI: Chưa có nhân viên bắt máy',
+          badgeColor: colors.warningText,
+          statusText: unansweredNotice || SOS_UNANSWERED_NOTICE,
+          showWave: false,
         };
       case 'MEDIA_ERROR':
         return {
@@ -545,7 +454,13 @@ export function SosCallScreen({ route, navigation }: Props) {
           <View style={styles.callStatusCard}>
             <View style={styles.callStatusHeader}>
               <Ionicons
-                name={callState === 'CONNECTED' ? 'call' : 'headset'}
+                name={
+                  callState === 'CONNECTED'
+                    ? 'call'
+                    : callState === 'RING_TIMED_OUT'
+                    ? 'time-outline'
+                    : 'headset'
+                }
                 size={18}
                 color={callInfo.badgeColor}
               />
@@ -563,6 +478,21 @@ export function SosCallScreen({ route, navigation }: Props) {
                 />
               </View>
             )}
+          </View>
+        )}
+
+        {/* Thông báo hết thời gian chờ bắt máy & chuẩn bị quay về bản đồ */}
+        {callState === 'RING_TIMED_OUT' && (
+          <View style={styles.unansweredCard}>
+            <Ionicons name="information-circle" size={22} color="#FDE68A" />
+            <View style={{ flex: 1 }}>
+              <AppText style={styles.unansweredTitle}>
+                {unansweredNotice || SOS_UNANSWERED_NOTICE}
+              </AppText>
+              <AppText style={styles.unansweredSub}>
+                Đang tự động quay lại màn hình bản đồ...
+              </AppText>
+            </View>
           </View>
         )}
 
@@ -691,9 +621,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: colors.darkRaised,
+    backgroundColor: colors.callActionBg,
     borderWidth: 1,
-    borderColor: '#475569',
+    borderColor: colors.heroSurface,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs + 2,
     borderRadius: radii.pill,
@@ -738,12 +668,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.darkRaised,
+    backgroundColor: colors.heroNestedBg,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#3F3F46',
+    borderColor: colors.heroSurface,
   },
   statusDot: {
     width: 7,
@@ -756,10 +686,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   callStatusCard: {
-    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    backgroundColor: colors.heroBlockBg,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: colors.heroNestedBg,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     alignItems: 'center',
@@ -776,9 +706,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: colors.heroBlockBg,
     borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.25)',
+    borderColor: colors.heroNestedBg,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs + 2,
@@ -792,10 +722,10 @@ const styles = StyleSheet.create({
     lineHeight: 15,
   },
   apiConsoleBox: {
-    backgroundColor: colors.hero,
+    backgroundColor: colors.heroBlockBg,
     borderRadius: radii.lg,
     padding: spacing.md,
-    borderColor: colors.darkRaised,
+    borderColor: colors.heroNestedBg,
     borderWidth: 1,
     gap: 4,
     marginVertical: spacing.sm,
@@ -806,7 +736,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingBottom: 4,
     borderBottomWidth: 1,
-    borderBottomColor: colors.darkRaised,
+    borderBottomColor: colors.heroNestedBg,
   },
   apiConsoleTitle: {
     color: '#FFFFFF',
@@ -861,8 +791,8 @@ const styles = StyleSheet.create({
     height: 88,
     borderRadius: 44,
     borderWidth: 2,
-    borderColor: colors.darkRaised,
-    backgroundColor: 'rgba(45, 45, 49, 0.4)',
+    borderColor: colors.heroNestedBg,
+    backgroundColor: 'rgba(14, 91, 126, 0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -879,8 +809,8 @@ const styles = StyleSheet.create({
     height: 72,
     borderRadius: 36,
     borderWidth: 2,
-    borderColor: colors.darkRaised,
-    backgroundColor: 'rgba(45, 45, 49, 0.6)',
+    borderColor: colors.heroNestedBg,
+    backgroundColor: 'rgba(18, 107, 147, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -951,7 +881,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    backgroundColor: colors.darkRaised,
+    backgroundColor: colors.heroNestedBg,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xs + 2,
     borderRadius: radii.pill,
@@ -993,6 +923,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     lineHeight: 16,
+  },
+  unansweredCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.heroBlockBg,
+    borderColor: colors.heroSurface,
+    borderWidth: 1,
+    padding: spacing.md,
+    borderRadius: radii.lg,
+    maxWidth: 520,
+    marginTop: spacing.xs,
+  },
+  unansweredTitle: {
+    color: colors.textInverse,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  unansweredSub: {
+    color: colors.textInverseSecondary,
+    fontSize: 12,
+    marginTop: 2,
   },
   acknowledgedTitle: {
     color: '#34D399',
