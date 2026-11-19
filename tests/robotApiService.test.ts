@@ -11,6 +11,7 @@ vi.mock('expo-constants', () => ({
 import { apiClient, parseDeviceJwtClaims } from '../src/services/api/client';
 import { createPiEnvelope } from '../src/services/api/envelope';
 import { parseSseMediaEventsChunk, robotApiService } from '../src/services/api/robotApiService';
+import { getServerClockOffsetMs, resetServerClock } from '../src/services/api/serverClock';
 import {
   getAdaptivePollDelayMs,
   POLL_INTERVAL_ACTIVE_MS,
@@ -75,6 +76,7 @@ describe('apiClient', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    resetServerClock();
     vi.restoreAllMocks();
   });
 
@@ -177,6 +179,7 @@ describe('robotApiService', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    resetServerClock();
     vi.restoreAllMocks();
   });
 
@@ -569,6 +572,7 @@ describe('robotMapService.loadMapPackage', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    resetServerClock();
     vi.restoreAllMocks();
   });
 
@@ -1036,5 +1040,302 @@ describe('robotMapService polling & viewer auth optimization', () => {
     const status = await robotMapService.checkJobQrStepStatus('job-qr-1', 'step-auth-1');
     expect(status?.verified).toBe(true);
     expect(status?.stepStatus).toBe('SUCCEEDED');
+  });
+
+  it('handles GET /api/v1/pi/jobs/{jobId}/face-auth (200, 204, expired, mismatched jobId)', async () => {
+    apiClient.setBaseUrl('http://localhost:8080');
+    apiClient.setToken('device-token', 'robot-face-1');
+
+    const faceJobId = '11111111-1111-4111-8111-111111111111';
+    const otherJobId = '22222222-2222-4222-8222-222222222222';
+    const faceStepId = '33333333-3333-4333-8333-333333333333';
+    const faceSessionId = '44444444-4444-4444-8444-444444444444';
+
+    let mode: 'ok' | 'no_content' | 'wrong_job' | 'expired' = 'ok';
+    global.fetch = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `http://localhost:8080/api/v1/pi/jobs/${faceJobId}/face-auth`) {
+        if (mode === 'no_content') return new Response(null, { status: 204 });
+        if (mode === 'wrong_job') {
+          return jsonResponse({
+            jobId: otherJobId,
+            authJobStepId: faceStepId,
+            sessionId: faceSessionId,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        }
+        if (mode === 'expired') {
+          return jsonResponse({
+            jobId: faceJobId,
+            authJobStepId: faceStepId,
+            sessionId: faceSessionId,
+            expiresAt: new Date(Date.now() - 1_000).toISOString(),
+          });
+        }
+        return jsonResponse({
+          jobId: faceJobId,
+          authJobStepId: faceStepId,
+          sessionId: faceSessionId,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const active = await robotApiService.getStaffFaceScanWindow(faceJobId);
+    expect(active).toEqual({
+      jobId: faceJobId,
+      authJobStepId: faceStepId,
+      sessionId: faceSessionId,
+      expiresAt: active?.expiresAt,
+    });
+
+    mode = 'no_content';
+    expect(await robotApiService.getStaffFaceScanWindow(faceJobId)).toBeNull();
+
+    mode = 'wrong_job';
+    expect(await robotApiService.getStaffFaceScanWindow(faceJobId)).toBeNull();
+
+    mode = 'expired';
+    expect(await robotApiService.getStaffFaceScanWindow(faceJobId)).toBeNull();
+  });
+
+  it('validates POST /api/v1/pi/jobs/{jobId}/face-auth/verify payload, rejects spoofed transportSessionId and prevents duplicate in-flight verify', async () => {
+    apiClient.setBaseUrl('http://localhost:8080');
+    apiClient.setToken('device-token', 'robot-face-1');
+
+    const faceJobId = '11111111-1111-4111-8111-111111111111';
+    const faceStepId = '33333333-3333-4333-8333-333333333333';
+    const faceSessionId = '44444444-4444-4444-8444-444444444444';
+    const transportSessionId = '55555555-5555-4555-8555-555555555555';
+
+    // Reject using Face window sessionId as transportSessionId
+    await expect(
+      robotApiService.verifyStaffFace(faceJobId, {
+        sessionId: faceSessionId,
+        authJobStepId: faceStepId,
+        transportSessionId: faceSessionId,
+        image: '/9j/4AAQSkZJRg==',
+      }),
+    ).rejects.toThrow(/FACE_INVALID_TRANSPORT_SESSION/);
+
+    // Reject non-JPEG payload
+    await expect(
+      robotApiService.verifyStaffFace(faceJobId, {
+        sessionId: faceSessionId,
+        authJobStepId: faceStepId,
+        transportSessionId,
+        image: 'iVBORw0KGgoAAAANSUhEUg==',
+      }),
+    ).rejects.toThrow(/FACE_INVALID_JPEG/);
+
+    let releaseFetch: ((res: Response) => void) | null = null;
+    const fetchMock = vi.fn<typeof fetch>(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseFetch = resolve;
+        }),
+    );
+    global.fetch = fetchMock;
+
+    const firstReq = robotApiService.verifyStaffFace(faceJobId, {
+      sessionId: faceSessionId,
+      authJobStepId: faceStepId,
+      transportSessionId,
+      image: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    await expect(
+      robotApiService.verifyStaffFace(faceJobId, {
+        sessionId: faceSessionId,
+        authJobStepId: faceStepId,
+        transportSessionId,
+        image: '/9j/4AAQSkZJRg==',
+      }),
+    ).rejects.toThrow(/FACE_VERIFY_IN_FLIGHT/);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init?.body))).toEqual({
+      sessionId: faceSessionId,
+      authJobStepId: faceStepId,
+      transportSessionId,
+      image: '/9j/4AAQSkZJRg==',
+    });
+
+    releaseFetch!(jsonResponse({ verified: false, reason: 'NO_MATCH' }));
+    await expect(firstReq).resolves.toEqual({ verified: false, reason: 'NO_MATCH' });
+  });
+
+  it('checkJobQrStepStatus isolates sender vs receiver AUTHENTICATE steps and extracts FACE_VERIFICATION metadata', async () => {
+    const faceJobId = 'aaaaaaaa-1111-4111-8111-111111111111';
+    const senderStepId = 'bbbbbbbb-1111-4111-8111-111111111111';
+    const receiverStepId = 'cccccccc-1111-4111-8111-111111111111';
+    const senderAcc = 'dddddddd-1111-4111-8111-111111111111';
+    const receiverAcc = 'eeeeeeee-1111-4111-8111-111111111111';
+
+    global.fetch = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `${REMOTE_API_BASE}/jobs/${faceJobId}`) {
+        return jsonResponse({
+          job: {
+            jobId: faceJobId,
+            robotId: 'robot-1',
+            status: 'RUNNING',
+            selectedJobStepId: receiverStepId,
+            inputJson: {
+              authentication_method: 'FACE_VERIFICATION',
+              expected_sender_account_id: senderAcc,
+              expected_receiver_account_id: receiverAcc,
+            },
+          },
+          steps: [
+            {
+              jobStepId: senderStepId,
+              stepTypeSnapshot: 'AUTHENTICATE',
+              stepCodeSnapshot: 'AUTH_SENDER',
+              status: 'SUCCEEDED',
+              resolvedInputsJson: { method: 'FACE_VERIFICATION', purpose: 'DELIVERY_SENDER' },
+              resultJson: { verified: true, purpose: 'DELIVERY_SENDER', actor_account_id: senderAcc },
+            },
+            {
+              jobStepId: receiverStepId,
+              stepTypeSnapshot: 'AUTHENTICATE',
+              stepCodeSnapshot: 'AUTH_RECEIVER',
+              status: 'RUNNING',
+              resolvedInputsJson: { method: 'FACE_VERIFICATION', purpose: 'DELIVERY_RECEIVER' },
+              resultJson: { action: 'AWAIT_FACE_VERIFICATION', expires_at: '2026-11-19T12:00:00Z' },
+            },
+          ],
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    // Must return RECEIVER RUNNING (not verified), never fallback to SUCCEEDED SENDER step
+    const receiverStatus = await robotMapService.checkJobQrStepStatus(faceJobId, receiverStepId);
+    expect(receiverStatus?.verified).toBe(false);
+    expect(receiverStatus?.stepStatus).toBe('RUNNING');
+    expect(receiverStatus?.authMethod).toBe('FACE_VERIFICATION');
+    expect(receiverStatus?.purpose).toBe('DELIVERY_RECEIVER');
+    expect(receiverStatus?.expectedAccountId).toBe(receiverAcc);
+
+    // Asking for an unknown stepId must NOT fall back to sender's SUCCEEDED step
+    const missingStep = await robotMapService.checkJobQrStepStatus(faceJobId, 'ffffffff-1111-4111-8111-111111111111');
+    expect(missingStep?.verified).toBe(false);
+    expect(missingStep?.stepStatus).toBeNull();
+  });
+
+  it('compensates tablet clock skew using server Date header in getStaffFaceScanWindow and keeps AUTH_SENDER as QR_CODE', async () => {
+    apiClient.setBaseUrl('http://localhost:8080');
+    apiClient.setToken('device-token', 'robot-face-1');
+
+    const jobId = 'aaaaaaaa-2222-4222-8222-222222222222';
+    const stepId = 'bbbbbbbb-2222-4222-8222-222222222222';
+    const senderStepId = 'cccccccc-2222-4222-8222-222222222222';
+    const sessionId = 'dddddddd-2222-4222-8222-222222222222';
+
+    // Tablet clock is 5 minutes ahead of server Date header; window expires in 60s on server time
+    const localNow = Date.now();
+    const serverNowMs = localNow - 300_000;
+    const serverDateHeader = new Date(serverNowMs).toUTCString();
+    const windowExpiresAt = new Date(serverNowMs + 60_000).toISOString();
+
+    let mode: 'window' | 'no_content' | 'net_error' | 'bad_jpeg' = 'window';
+    global.fetch = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `http://localhost:8080/api/v1/pi/jobs/${jobId}/face-auth`) {
+        if (mode === 'no_content') {
+          return new Response(null, { status: 204, headers: { Date: serverDateHeader } });
+        }
+        if (mode === 'net_error') {
+          throw new Error('ECONNRESET');
+        }
+        return new Response(
+          JSON.stringify({
+            jobId,
+            authJobStepId: stepId,
+            sessionId,
+            expiresAt: windowExpiresAt,
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              Date: serverDateHeader,
+            },
+          },
+        );
+      }
+      if (url === `${REMOTE_API_BASE}/jobs/${jobId}/camera-preview.jpg`) {
+        return new Response(new Uint8Array([0x00, 0x01, 0x02, 0x03]), {
+          status: 200,
+          headers: { 'Content-Type': 'image/jpeg', Date: serverDateHeader },
+        });
+      }
+      if (url === `${REMOTE_API_BASE}/jobs/${jobId}`) {
+        return jsonResponse({
+          job: {
+            jobId,
+            robotId: 'robot-1',
+            status: 'RUNNING',
+            selectedJobStepId: senderStepId,
+            inputJson: { authentication_method: 'FACE_VERIFICATION' },
+          },
+          steps: [
+            {
+              jobStepId: senderStepId,
+              stepTypeSnapshot: 'AUTHENTICATE',
+              stepCodeSnapshot: 'AUTH_SENDER',
+              status: 'RUNNING',
+              resolvedInputsJson: { purpose: 'DELIVERY_SENDER' },
+            },
+          ],
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    // Without server clock compensation Date.parse(windowExpiresAt) <= Date.now() would wrongly return null
+    const win = await robotApiService.getStaffFaceScanWindow(jobId, { throwOnError: true });
+    expect(win).toEqual({
+      jobId,
+      authJobStepId: stepId,
+      sessionId,
+      expiresAt: windowExpiresAt,
+    });
+    expect(getServerClockOffsetMs()).toBeLessThan(-250_000);
+
+    // HTTP 204 returns null even with throwOnError: true
+    mode = 'no_content';
+    await expect(
+      robotApiService.getStaffFaceScanWindow(jobId, { throwOnError: true }),
+    ).resolves.toBeNull();
+
+    // Network failure throws when throwOnError: true
+    mode = 'net_error';
+    await expect(
+      robotApiService.getStaffFaceScanWindow(jobId, { throwOnError: true }),
+    ).rejects.toThrow();
+
+    // Invalid JPEG magic bytes rejected on HTTP 200
+    const badFrame = await robotMapService.fetchJobCameraPreview(jobId);
+    expect(badFrame.status).toBe(200);
+    expect(badFrame.dataUri).toBeNull();
+    expect(badFrame.errorMessage).toContain('JPEG');
+
+    // AUTH_SENDER must NOT inherit FACE_VERIFICATION from job inputJson.authentication_method
+    const senderStatus = await robotMapService.checkJobQrStepStatus(jobId, senderStepId);
+    expect(senderStatus?.purpose).toBe('DELIVERY_SENDER');
+    expect(senderStatus?.authMethod).toBe('QR_CODE');
   });
 });

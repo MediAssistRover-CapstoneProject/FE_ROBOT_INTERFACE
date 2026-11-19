@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DeliveryMission, DeliveryQrChallenge, DeliveryStep, resolveDeliveryStage, selectDeliveryChallenge,
+  DeliveryFaceWindow,
+  DeliveryMission,
+  DeliveryQrChallenge,
+  DeliveryStep,
+  getDeliveryAuthMethod,
+  isAuthenticateStepVerifiedForLeg,
+  resolveDeliveryStage,
+  selectDeliveryChallenge,
+  selectDeliveryFaceWindow,
 } from '../src/features/logistics/deliveryMission';
 
 const date = '2026-11-10T01:00:00Z';
@@ -96,5 +104,78 @@ describe('delivery QR visibility', () => {
     expect(selectDeliveryChallenge({ ...active, step: step('AUTHENTICATE', { method: 'QR_CODE', purpose: 'DELIVERY_SENDER' }, 'SUCCEEDED') }, challenge, now)).toBeNull();
     expect(selectDeliveryChallenge({ ...active, cancelRequestedAt: date }, challenge, now)).toBeNull();
     expect(selectDeliveryChallenge({ ...active, jobStatus: 'FAILED' }, challenge, now)).toBeNull();
+  });
+});
+
+describe('delivery Face verification helpers', () => {
+  const receiverFaceStep = step('AUTHENTICATE', { method: 'FACE_VERIFICATION', purpose: 'DELIVERY_RECEIVER' });
+  const senderFaceStep = step('AUTHENTICATE', { method: 'FACE_VERIFICATION', purpose: 'DELIVERY_SENDER' });
+  const activeReceiverFaceMission: DeliveryMission = {
+    ...mission,
+    pickedUpAt: date,
+    step: receiverFaceStep,
+  };
+  const faceWindow: DeliveryFaceWindow = {
+    jobId,
+    authJobStepId: jobStepId,
+    sessionId: '7f90d59f-6798-4cc0-88de-80ec62dc746c',
+    expiresAt: new Date(now + 1000).toISOString(),
+  };
+
+  it('distinguishes QR_CODE vs FACE_VERIFICATION auth method and keeps receiver face window scoped', () => {
+    expect(getDeliveryAuthMethod(activeReceiverFaceMission)).toBe('FACE_VERIFICATION');
+    expect(
+      getDeliveryAuthMethod({
+        jobStepId,
+        stepTypeSnapshot: 'AUTHENTICATE',
+        status: 'RUNNING',
+        resultJson: { action: 'AWAIT_FACE_VERIFICATION' },
+      }),
+    ).toBe('FACE_VERIFICATION');
+    expect(
+      getDeliveryAuthMethod({ ...mission, step: step('AUTHENTICATE', { method: 'QR_CODE', purpose: 'DELIVERY_SENDER' }) }),
+    ).toBe('QR_CODE');
+
+    // Only DELIVERY_RECEIVER stage accepts the face window; DELIVERY_SENDER stays null
+    expect(selectDeliveryFaceWindow(activeReceiverFaceMission, faceWindow, now)).toBe(faceWindow);
+    expect(selectDeliveryFaceWindow({ ...mission, step: senderFaceStep }, faceWindow, now)).toBeNull();
+    expect(selectDeliveryFaceWindow(activeReceiverFaceMission, faceWindow, now + 1000)).toBeNull();
+    expect(selectDeliveryFaceWindow(activeReceiverFaceMission, { ...faceWindow, jobId: 'other-job' }, now)).toBeNull();
+    expect(selectDeliveryFaceWindow(activeReceiverFaceMission, { ...faceWindow, authJobStepId: 'other-step' }, now)).toBeNull();
+    expect(selectDeliveryFaceWindow({ ...activeReceiverFaceMission, cancelRequestedAt: date }, faceWindow, now)).toBeNull();
+    expect(
+      selectDeliveryFaceWindow(
+        { ...mission, pickedUpAt: date, step: step('AUTHENTICATE', { method: 'QR_CODE', purpose: 'DELIVERY_RECEIVER' }) },
+        faceWindow,
+        now,
+      ),
+    ).toBeNull();
+  });
+
+  it('prevents sender verification from satisfying receiver step', () => {
+    const senderVerifiedStep: DeliveryStep = {
+      jobStepId,
+      stepTypeSnapshot: 'AUTHENTICATE',
+      status: 'SUCCEEDED',
+      resolvedInputsJson: { method: 'FACE_VERIFICATION', purpose: 'DELIVERY_SENDER' },
+      resultJson: { verified: true, purpose: 'DELIVERY_SENDER' },
+    };
+
+    expect(
+      isAuthenticateStepVerifiedForLeg(senderVerifiedStep, jobStepId, 'DELIVERY_SENDER', 'FACE_VERIFICATION'),
+    ).toBe(true);
+    expect(
+      isAuthenticateStepVerifiedForLeg(senderVerifiedStep, jobStepId, 'DELIVERY_RECEIVER', 'FACE_VERIFICATION'),
+    ).toBe(false);
+    expect(
+      isAuthenticateStepVerifiedForLeg(senderVerifiedStep, 'other-step-id', 'DELIVERY_SENDER', 'FACE_VERIFICATION'),
+    ).toBe(false);
+    expect(
+      isAuthenticateStepVerifiedForLeg(
+        { ...senderVerifiedStep, resultJson: { verified: false, purpose: 'DELIVERY_SENDER' } },
+        jobStepId,
+        'DELIVERY_SENDER',
+      ),
+    ).toBe(false);
   });
 });
