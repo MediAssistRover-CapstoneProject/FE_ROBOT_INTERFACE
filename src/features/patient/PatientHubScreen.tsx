@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   AppState,
+  Pressable,
   ScrollView,
   StyleSheet,
   View,
@@ -14,6 +15,12 @@ import { RootStackParamList } from '../../app/navigation';
 import { AppText } from '../../components/ui';
 import { DraggableSosButton } from '../../components/DraggableSosButton';
 import { QrStaffCameraOverlay } from '../../components/QrStaffCameraOverlay';
+import { RobotFaceView } from './components/RobotFaceView';
+import {
+  isNavigationGuidanceActive,
+  resolveRobotDisplayMode,
+  resolveRobotFaceExpression,
+} from './robotDisplayMode';
 import { FaceVerificationScreen } from '../logistics/FaceVerificationScreen';
 import {
   ActiveAuthOverlayState,
@@ -36,6 +43,7 @@ import {
 } from '../navigation/navigationGuidance';
 import {
   robotMapService,
+  ActiveVoiceInteractionSummary,
   DEFAULT_HOSPITAL_MAP,
   DEFAULT_MAP_METADATA,
   DEFAULT_HOSPITAL_ZONES,
@@ -89,6 +97,14 @@ export function PatientHubScreen({ navigation }: Props) {
   const [planEndpointId, setPlanEndpointId] = useState<string | null>(null);
   const [planEndpointName, setPlanEndpointName] = useState<string | null>(null);
   const [backendGuidance, setBackendGuidance] = useState<NavigationGuidanceResult | null>(null);
+  const [selectedStepType, setSelectedStepType] = useState<string | null>(null);
+
+  // 3b. Giao diện khuôn mặt robot khi giao tiếp cơ bản / nhàn rỗi (ẩn ngay khi vào luồng chỉ đường)
+  const [activeVoice, setActiveVoice] = useState<ActiveVoiceInteractionSummary | null>(null);
+  const [mqttConnected, setMqttConnected] = useState<boolean>(true);
+  const [manualMapInIdle, setManualMapInIdle] = useState<boolean>(false);
+  const lastVoiceInteractionIdRef = useRef<string | null>(null);
+  const wasNavigatingRef = useRef<boolean>(false);
 
   // 4. Trạng thái hiển thị giao diện xác thực Staff (QR hoặc Khuôn mặt) khi robot ở bước AUTHENTICATE
   const [activeAuthOverlay, setActiveAuthOverlay] = useState<ActiveAuthOverlayState | null>(null);
@@ -165,6 +181,11 @@ export function PatientHubScreen({ navigation }: Props) {
         setIsPoseLive(false);
       }
 
+      setSelectedStepType(snap.selectedStepType ?? null);
+      if (snap.snapshotReachable) {
+        setMqttConnected(Boolean(snap.mqttConnected));
+      }
+
       if (snap.navigationPlan && snap.navigationPlan.length >= 2) {
         setLiveNavPlan(snap.navigationPlan);
         setPlanEndpointId(snap.planEndpointId ?? null);
@@ -179,6 +200,18 @@ export function PatientHubScreen({ navigation }: Props) {
         setBackendGuidance(snap.backendGuidance);
       } else {
         setBackendGuidance(null);
+      }
+
+      const snapNavigating = isNavigationGuidanceActive({
+        hasPlannedPath: Boolean(snap.navigationPlan && snap.navigationPlan.length >= 2),
+        guidance:
+          snap.backendGuidance && snap.backendGuidance.state !== 'IDLE'
+            ? snap.backendGuidance
+            : null,
+        selectedStepType: snap.selectedStepType ?? null,
+      });
+      if (snapNavigating) {
+        setActiveVoice(null);
       }
 
       if (snap.activeJobId && snap.selectedStepType === 'AUTHENTICATE') {
@@ -204,8 +237,34 @@ export function PatientHubScreen({ navigation }: Props) {
         setAuthToken(pkg.token);
         if (pkg.initialSnapshot) {
           applySnapshotSummary(pkg.initialSnapshot, pkg.activeMap.mapId);
+          const initNavigating = isNavigationGuidanceActive({
+            hasPlannedPath: Boolean(
+              pkg.initialSnapshot.navigationPlan &&
+                pkg.initialSnapshot.navigationPlan.length >= 2,
+            ),
+            guidance:
+              pkg.initialSnapshot.backendGuidance &&
+              pkg.initialSnapshot.backendGuidance.state !== 'IDLE'
+                ? pkg.initialSnapshot.backendGuidance
+                : null,
+            selectedStepType: pkg.initialSnapshot.selectedStepType ?? null,
+          });
+          let initVoice = false;
+          if (!initNavigating && pkg.initialSnapshot.snapshotReachable) {
+            const voice = await robotMapService.loadActiveVoiceInteraction(
+              pkg.initialSnapshot.robotId,
+            );
+            if (!alive) return;
+            setActiveVoice(voice);
+            initVoice = Boolean(voice);
+            if (voice) {
+              lastVoiceInteractionIdRef.current = voice.voiceInteractionId;
+              setManualMapInIdle(false);
+            }
+          }
           const hasActivity = Boolean(
-            pkg.initialSnapshot.activeJobId ||
+            initVoice ||
+              pkg.initialSnapshot.activeJobId ||
               pkg.initialSnapshot.navigationPlan?.length ||
               pkg.initialSnapshot.status !== 'IDLE'
           );
@@ -251,7 +310,28 @@ export function PatientHubScreen({ navigation }: Props) {
         const snap = await robotMapService.loadRobotSnapshot();
         if (cancelled) return;
         applySnapshotSummary(snap, activeMap.mapId);
-        nextDelayMs = getAdaptivePollDelayMs(snap);
+        const snapNavigating = isNavigationGuidanceActive({
+          hasPlannedPath: Boolean(snap.navigationPlan && snap.navigationPlan.length >= 2),
+          guidance:
+            snap.backendGuidance && snap.backendGuidance.state !== 'IDLE'
+              ? snap.backendGuidance
+              : null,
+          selectedStepType: snap.selectedStepType ?? null,
+        });
+        let hasVoice = false;
+        if (!snapNavigating && snap.snapshotReachable) {
+          const voice = await robotMapService.loadActiveVoiceInteraction(snap.robotId);
+          if (cancelled) return;
+          setActiveVoice(voice);
+          hasVoice = Boolean(voice);
+          if (voice && voice.voiceInteractionId !== lastVoiceInteractionIdRef.current) {
+            lastVoiceInteractionIdRef.current = voice.voiceInteractionId;
+            setManualMapInIdle(false);
+          } else if (!voice) {
+            lastVoiceInteractionIdRef.current = null;
+          }
+        }
+        nextDelayMs = getAdaptivePollDelayMs(snap, hasVoice);
       } catch {
         nextDelayMs = POLL_INTERVAL_IDLE_MS;
       } finally {
@@ -320,6 +400,30 @@ export function PatientHubScreen({ navigation }: Props) {
       preferCm: true,
     });
   }, [backendGuidance, plannedPath, robotPose, activeDestinationLabel]);
+
+  const isNavigationActive = isNavigationGuidanceActive({
+    hasPlannedPath: Boolean(plannedPath),
+    guidance,
+    selectedStepType,
+  });
+
+  useEffect(() => {
+    if (wasNavigatingRef.current && !isNavigationActive) {
+      setManualMapInIdle(false);
+    }
+    wasNavigatingRef.current = isNavigationActive;
+  }, [isNavigationActive]);
+
+  const displayMode = resolveRobotDisplayMode({
+    hasAuthOverlay: activeAuthOverlay !== null,
+    hasPlannedPath: Boolean(plannedPath),
+    guidance,
+    selectedStepType,
+    activeVoice,
+    manualMapPreference: manualMapInIdle,
+  });
+
+  const faceExpression = resolveRobotFaceExpression(activeVoice);
 
   // Nút SOS hình tròn nổi (kéo thả tự do trên màn hình)
   const handleEmergencySos = useCallback(() => {
@@ -447,6 +551,21 @@ export function PatientHubScreen({ navigation }: Props) {
               <AppText variant="caption" style={styles.cardHeaderTitle}>
                 LỘ TRÌNH CHỈ ĐƯỜNG
               </AppText>
+              {!isNavigationActive ? (
+                <Pressable
+                  onPress={() => setManualMapInIdle(false)}
+                  testID="idle-map-show-face-btn"
+                  accessibilityRole="button"
+                  accessibilityLabel="Quay lại giao diện khuôn mặt robot"
+                  style={({ pressed }) => [
+                    styles.faceToggleBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                >
+                  <Ionicons name="happy-outline" size={14} color={colors.textInverse} />
+                  <AppText style={styles.faceToggleBtnText}>Mặt robot</AppText>
+                </Pressable>
+              ) : null}
             </View>
 
             {hasActiveRoute ? (
@@ -485,6 +604,14 @@ export function PatientHubScreen({ navigation }: Props) {
                             {guidance.secondaryText}
                           </AppText>
                         ) : null}
+                        {guidance.speechText ? (
+                          <View style={styles.speechCueBadge}>
+                            <Ionicons name="volume-high-outline" size={14} color="#0369A1" />
+                            <AppText variant="caption" style={styles.speechCueText}>
+                              {guidance.speechText}
+                            </AppText>
+                          </View>
+                        ) : null}
                       </View>
                     </View>
                   </View>
@@ -504,6 +631,28 @@ export function PatientHubScreen({ navigation }: Props) {
           </View>
         </ScrollView>
       </View>
+
+      {/* Khuôn mặt robot khi giao tiếp cơ bản / nhàn rỗi (ẩn tự động khi có lộ trình chỉ đường hoặc xác thực) */}
+      {displayMode === 'robot_face' ? (
+        <View
+          style={[
+            styles.robotFaceOverlayContainer,
+            {
+              paddingTop: padTop,
+              paddingBottom: padBottom,
+              paddingLeft: padLeft,
+              paddingRight: padRight,
+            },
+          ]}
+        >
+          <RobotFaceView
+            expression={faceExpression}
+            activeVoice={activeVoice}
+            mqttConnected={mqttConnected}
+            onOpenMap={() => setManualMapInIdle(true)}
+          />
+        </View>
+      ) : null}
 
       {/* Lớp phủ xác thực QR / Camera Khuôn mặt (giữ nguyên map mounted bên dưới) */}
       {activeAuthOverlay ? (
@@ -575,6 +724,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: colors.background,
     position: 'relative',
+  },
+  robotFaceOverlayContainer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: colors.background,
+    zIndex: 50,
+    elevation: 4,
   },
   authOverlayContainer: {
     position: 'absolute',
@@ -650,6 +809,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.4,
   },
+  faceToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.heroSurface,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+  },
+  faceToggleBtnText: {
+    color: colors.textInverse,
+    fontSize: 11.5,
+    fontWeight: '700',
+  },
   routeActiveBox: {
     gap: spacing.md,
   },
@@ -715,6 +888,22 @@ const styles = StyleSheet.create({
     color: '#1D4ED8',
     fontSize: 13,
     fontWeight: '600',
+  },
+  speechCueBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radii.xs,
+    alignSelf: 'flex-start',
+  },
+  speechCueText: {
+    color: '#0369A1',
+    fontSize: 12,
+    fontWeight: '700',
   },
   idleRouteNotice: {
     flexDirection: 'row',

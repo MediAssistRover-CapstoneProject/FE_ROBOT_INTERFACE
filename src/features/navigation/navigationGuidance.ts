@@ -52,6 +52,8 @@ export interface NavigationGuidanceResult {
   segmentIndex?: number;
   primaryText: string;
   secondaryText: string;
+  speechText?: string | null;
+  promptKey?: string | null;
   etaSeconds?: number | null;
   observedAt?: string;
 }

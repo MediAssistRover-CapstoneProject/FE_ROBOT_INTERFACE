@@ -288,8 +288,22 @@ let cachedActiveRobotId: string = '0e3f1083-2546-4f45-8004-5eda5cb75a6f';
 let hasResolvedRobotId = false;
 let robotLookupCooldownUntil = 0;
 const deliveryRequestCache = new Map<string, any>();
+const voiceCommandDetailCache = new Map<string, any>();
 const staffNameCache = new Map<string, string>();
 let staffDirectoryLoaded = false;
+
+export interface ActiveVoiceInteractionSummary {
+  voiceInteractionId: string;
+  robotId: string;
+  status: 'ACTIVE';
+  startedAt: string | null;
+  detectedIntent: string | null;
+  latestCommandId: string | null;
+  lastUserText: string | null;
+  lastAnswerText: string | null;
+  lastIntentCode: string | null;
+  lastCommandAt: string | null;
+}
 
 export interface RobotSnapshotSummary {
   robotId?: string | null;
@@ -412,6 +426,19 @@ function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummar
     const epName = rawPlan?.endpointName || 'Điểm đến';
     const remCm =
       typeof guidData.remainingCm === 'number' ? Math.round(guidData.remainingCm) : undefined;
+    const interactionParams = guidData?.interaction?.params;
+    const speechText =
+      interactionParams?.action === 'SPEAK' &&
+      typeof interactionParams?.data?.text === 'string' &&
+      interactionParams.data.text.trim()
+        ? interactionParams.data.text.trim()
+        : null;
+    const promptKey =
+      interactionParams?.action === 'SPEAK' &&
+      typeof interactionParams?.prompt_key === 'string' &&
+      interactionParams.prompt_key.trim()
+        ? interactionParams.prompt_key.trim()
+        : null;
     backendGuidance = {
       state: guidData.state,
       direction: guidData.direction,
@@ -437,6 +464,8 @@ function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummar
         guidData.state === 'TRACKING' && typeof remCm === 'number'
           ? `${epName} · Còn ${remCm} cm`
           : epName,
+      speechText,
+      promptKey,
       observedAt: guidData.observedAt,
     };
   }
@@ -479,12 +508,17 @@ export const POLL_INTERVAL_OFFLINE_MS = 10_000;
  * - 8s khi IDLE không có job
  * - 10s khi mất kết nối tạm thời
  */
-export function getAdaptivePollDelayMs(summary: RobotSnapshotSummary | null | undefined): number {
+export function getAdaptivePollDelayMs(
+  summary: RobotSnapshotSummary | null | undefined,
+  hasActiveVoice = false
+): number {
   if (!summary || summary.snapshotReachable === false) {
     return POLL_INTERVAL_OFFLINE_MS;
   }
   const hasPlan = Boolean(summary.navigationPlan && summary.navigationPlan.length >= 2);
-  const isActive = Boolean(summary.activeJobId || hasPlan || summary.status !== 'IDLE');
+  const isActive = Boolean(
+    hasActiveVoice || summary.activeJobId || hasPlan || summary.status !== 'IDLE'
+  );
   return isActive ? POLL_INTERVAL_ACTIVE_MS : POLL_INTERVAL_IDLE_MS;
 }
 
@@ -500,6 +534,7 @@ class RobotMapService {
     hasResolvedRobotId = false;
     robotLookupCooldownUntil = 0;
     deliveryRequestCache.clear();
+    voiceCommandDetailCache.clear();
     staffNameCache.clear();
     staffDirectoryLoaded = false;
   }
@@ -1335,6 +1370,147 @@ class RobotMapService {
         ok: false,
         reason: err instanceof Error ? err.message : 'Không thể tạo yêu cầu dẫn đường.',
       };
+    }
+  }
+
+  /**
+   * Đọc phiên giao tiếp giọng nói đang ACTIVE của robot (GET /api/v1/voice/interactions?status=ACTIVE)
+   * kèm câu hỏi / câu trả lời mới nhất để cập nhật biểu cảm khuôn mặt robot.
+   */
+  public async loadActiveVoiceInteraction(
+    robotId?: string | null
+  ): Promise<ActiveVoiceInteractionSummary | null> {
+    const targetRobotId = (robotId || cachedActiveRobotId || '').trim();
+    if (!targetRobotId) {
+      return null;
+    }
+
+    const token = await this.getViewerToken();
+    if (!token) {
+      return null;
+    }
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    };
+
+    try {
+      const intRes = await fetch(
+        `${REMOTE_API_BASE}/voice/interactions?robotId=${encodeURIComponent(
+          targetRobotId
+        )}&status=ACTIVE&page=0&size=1`,
+        { headers }
+      );
+      recordServerTimeFromHeaders(intRes.headers);
+      if (intRes.status === 401) {
+        cachedViewerToken = null;
+        tokenExpiresAt = 0;
+        return null;
+      }
+      if (!intRes.ok) {
+        return null;
+      }
+
+      const intRaw = await intRes.json().catch(() => null);
+      const rows: any[] = Array.isArray(intRaw?.content) ? intRaw.content : [];
+      const activeRow = rows.find(
+        (r) =>
+          r?.status === 'ACTIVE' &&
+          typeof r?.voiceInteractionId === 'string' &&
+          (!r?.robotId || String(r.robotId).toLowerCase() === targetRobotId.toLowerCase())
+      );
+      if (!activeRow) {
+        return null;
+      }
+
+      const interactionId = String(activeRow.voiceInteractionId);
+      let latestCommandId: string | null = null;
+      let lastUserText: string | null = null;
+      let lastAnswerText: string | null = null;
+      let lastIntentCode: string | null = null;
+      let lastCommandAt: string | null = null;
+
+      try {
+        const cmdListRes = await fetch(
+          `${REMOTE_API_BASE}/voice/commands?interactionId=${encodeURIComponent(
+            interactionId
+          )}&page=0&size=1`,
+          { headers }
+        );
+        recordServerTimeFromHeaders(cmdListRes.headers);
+        if (cmdListRes.ok) {
+          const cmdRaw = await cmdListRes.json().catch(() => null);
+          const cmdRows: any[] = Array.isArray(cmdRaw?.content) ? cmdRaw.content : [];
+          const latest = cmdRows[0];
+          if (latest && typeof latest.voiceCommandId === 'string') {
+            latestCommandId = latest.voiceCommandId;
+            lastIntentCode = typeof latest.intentCode === 'string' ? latest.intentCode : null;
+            lastCommandAt =
+              typeof latest.processedAt === 'string'
+                ? latest.processedAt
+                : typeof latest.receivedAt === 'string'
+                  ? latest.receivedAt
+                  : null;
+
+            if (latest.rawDataAvailable === true && latestCommandId) {
+              let detail = voiceCommandDetailCache.get(latestCommandId);
+              if (!detail) {
+                const detailRes = await fetch(
+                  `${REMOTE_API_BASE}/voice/commands/${encodeURIComponent(latestCommandId)}`,
+                  { headers }
+                );
+                recordServerTimeFromHeaders(detailRes.headers);
+                if (detailRes.ok) {
+                  detail = await detailRes.json().catch(() => null);
+                  if (detail && typeof detail === 'object') {
+                    voiceCommandDetailCache.set(latestCommandId, detail);
+                  }
+                }
+              }
+              if (detail && typeof detail === 'object') {
+                if (typeof detail.rawText === 'string' && detail.rawText.trim()) {
+                  lastUserText = detail.rawText.trim();
+                }
+                if (
+                  typeof detail?.parameters?.answer_text === 'string' &&
+                  detail.parameters.answer_text.trim()
+                ) {
+                  lastAnswerText = detail.parameters.answer_text.trim();
+                }
+                if (!lastIntentCode && typeof detail.intentCode === 'string') {
+                  lastIntentCode = detail.intentCode;
+                }
+                if (!lastCommandAt) {
+                  lastCommandAt =
+                    typeof detail.processedAt === 'string'
+                      ? detail.processedAt
+                      : typeof detail.receivedAt === 'string'
+                        ? detail.receivedAt
+                        : null;
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Không làm gián đoạn trạng thái phiên giao tiếp nếu chỉ thiếu chi tiết command
+      }
+
+      return {
+        voiceInteractionId: interactionId,
+        robotId: String(activeRow.robotId || targetRobotId),
+        status: 'ACTIVE',
+        startedAt: typeof activeRow.startedAt === 'string' ? activeRow.startedAt : null,
+        detectedIntent:
+          typeof activeRow.detectedIntent === 'string' ? activeRow.detectedIntent : null,
+        latestCommandId,
+        lastUserText,
+        lastAnswerText,
+        lastIntentCode,
+        lastCommandAt,
+      };
+    } catch {
+      return null;
     }
   }
 }

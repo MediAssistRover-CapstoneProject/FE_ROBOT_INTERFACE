@@ -1338,4 +1338,143 @@ describe('robotMapService polling & viewer auth optimization', () => {
     expect(senderStatus?.purpose).toBe('DELIVERY_SENDER');
     expect(senderStatus?.authMethod).toBe('QR_CODE');
   });
+
+  it('loads ACTIVE voice interaction with cached command text, extracts navigation speech cue, and keeps active poll cadence when chatting', async () => {
+    const robotId = 'aaaaaaaa-3333-4333-8333-333333333333';
+    const interactionId = 'bbbbbbbb-3333-4333-8333-333333333333';
+    const commandId = 'cccccccc-3333-4333-8333-333333333333';
+    let detailFetches = 0;
+    let hasActiveInteraction = true;
+
+    global.fetch = vi.fn<typeof fetch>(async (input) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === `${REMOTE_API_BASE}/auth/login`) {
+        return jsonResponse({ accessToken: 'viewer-tok' });
+      }
+      if (url === `${REMOTE_API_BASE}/voice/interactions?robotId=${robotId}&status=ACTIVE&page=0&size=1`) {
+        return jsonResponse({
+          content: hasActiveInteraction
+            ? [
+                {
+                  voiceInteractionId: interactionId,
+                  robotId,
+                  status: 'ACTIVE',
+                  startedAt: '2026-11-19T09:59:50Z',
+                  detectedIntent: 'ASK_INFO',
+                },
+              ]
+            : [],
+        });
+      }
+      if (url === `${REMOTE_API_BASE}/voice/commands?interactionId=${interactionId}&page=0&size=1`) {
+        return jsonResponse({
+          content: [
+            {
+              voiceCommandId: commandId,
+              voiceInteractionId: interactionId,
+              intentCode: 'ASK_INFO',
+              rawDataAvailable: true,
+              receivedAt: '2026-11-19T10:00:00Z',
+              processedAt: '2026-11-19T10:00:02Z',
+            },
+          ],
+        });
+      }
+      if (url === `${REMOTE_API_BASE}/voice/commands/${commandId}`) {
+        detailFetches += 1;
+        return jsonResponse({
+          voiceCommandId: commandId,
+          rawText: 'Quầy thuốc ở đâu?',
+          intentCode: 'ASK_INFO',
+          parameters: { answer_text: 'Quầy thuốc nằm ở tầng 1, khu A.' },
+          processedAt: '2026-11-19T10:00:02Z',
+        });
+      }
+      if (url === `${REMOTE_API_BASE}/robots`) {
+        return jsonResponse({ content: [{ robotId, robotCode: 'ROBOT_MAR_01' }] });
+      }
+      if (url.endsWith(`/robots/${robotId}/snapshot`)) {
+        return jsonResponse({
+          robot: { robotId, status: 'BUSY', batteryRaw: 8500 },
+          activeJobId: 'job-nav-1',
+          navigationPlan: {
+            endpointId: 'ep-1',
+            endpointName: 'Quầy Thuốc',
+            points: [
+              { xM: 0.5, yM: 1.0 },
+              { xM: 1.5, yM: 1.0 },
+            ],
+          },
+        });
+      }
+      if (url.endsWith(`/robots/${robotId}/navigation-guidance`)) {
+        return jsonResponse({
+          state: 'TRACKING',
+          direction: 'LEFT',
+          distanceCm: 65,
+          remainingCm: 140,
+          text: 'Còn 65 cm, rẽ trái',
+          interaction: {
+            stepType: 'INTERACT',
+            direction: 'LEFT',
+            params: {
+              action: 'SPEAK',
+              prompt_key: 'NAVIGATION_LEFT',
+              data: { text: 'Chuẩn bị rẽ trái.' },
+            },
+          },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const first = await robotMapService.loadActiveVoiceInteraction(robotId);
+    const second = await robotMapService.loadActiveVoiceInteraction(robotId);
+    expect(first).toEqual({
+      voiceInteractionId: interactionId,
+      robotId,
+      status: 'ACTIVE',
+      startedAt: '2026-11-19T09:59:50Z',
+      detectedIntent: 'ASK_INFO',
+      latestCommandId: commandId,
+      lastUserText: 'Quầy thuốc ở đâu?',
+      lastAnswerText: 'Quầy thuốc nằm ở tầng 1, khu A.',
+      lastIntentCode: 'ASK_INFO',
+      lastCommandAt: '2026-11-19T10:00:02Z',
+    });
+    expect(second).toEqual(first);
+    expect(detailFetches).toBe(1);
+
+    // Idle snapshot still uses active poll cadence when basic voice interaction is ACTIVE
+    expect(
+      getAdaptivePollDelayMs(
+        {
+          pose: null,
+          isPoseLive: false,
+          status: 'IDLE',
+          batteryRaw: 8500,
+          mqttConnected: true,
+          navigationPlan: null,
+          activeJobId: null,
+          snapshotReachable: true,
+        },
+        true,
+      ),
+    ).toBe(POLL_INTERVAL_ACTIVE_MS);
+
+    hasActiveInteraction = false;
+    expect(await robotMapService.loadActiveVoiceInteraction(robotId)).toBeNull();
+
+    // Navigation guidance preserves spoken LEFT cue for map overlay banner
+    robotMapService.resetViewerCache();
+    process.env.EXPO_PUBLIC_ROBOT_ID = robotId;
+    try {
+      const snap = await robotMapService.loadRobotSnapshot();
+      expect(snap.backendGuidance?.direction).toBe('LEFT');
+      expect(snap.backendGuidance?.speechText).toBe('Chuẩn bị rẽ trái.');
+      expect(snap.backendGuidance?.promptKey).toBe('NAVIGATION_LEFT');
+    } finally {
+      delete process.env.EXPO_PUBLIC_ROBOT_ID;
+    }
+  });
 });
