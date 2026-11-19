@@ -1,9 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AppText } from './ui';
 import { robotApiService } from '../services/api';
-import { JobCameraPreviewFrame, robotMapService } from '../services/api/robotMapService';
+import { robotMapService } from '../services/api/robotMapService';
+import { getServerNowMs } from '../services/api/serverClock';
+import { RobotAuthCameraView } from './RobotAuthCameraView';
+import {
+  CameraPreviewState,
+  applyCameraPreviewResponse,
+  createInitialCameraPreviewState,
+  evaluateCameraPreviewFreshness,
+} from '../features/logistics/cameraPreviewState';
 import { playSuccessTing } from '../utils/playSuccessTing';
 import { colors, radii, spacing } from '../theme';
 
@@ -33,7 +41,10 @@ export function QrStaffCameraOverlay({
   onDismiss,
 }: QrStaffCameraOverlayProps) {
   const [phase, setPhase] = useState<'scanning' | 'success'>('scanning');
-  const [frame, setFrame] = useState<JobCameraPreviewFrame | null>(null);
+  const previewSessionKey = ['QR', jobId, authJobStepId ?? '', purpose ?? '', expiresAt ?? ''].join(':');
+  const [previewState, setPreviewState] = useState<CameraPreviewState>(() =>
+    createInitialCameraPreviewState(previewSessionKey),
+  );
   const [remainingSec, setRemainingSec] = useState<number | null>(null);
 
   const onSuccessRef = useRef(onSuccessComplete);
@@ -55,7 +66,7 @@ export function QrStaffCameraOverlay({
       return;
     }
     const updateCountdown = () => {
-      const diffSec = Math.max(0, Math.floor((Date.parse(expiresAt) - Date.now()) / 1000));
+      const diffSec = Math.max(0, Math.ceil((Date.parse(expiresAt) - getServerNowMs()) / 1000));
       setRemainingSec(Number.isFinite(diffSec) ? diffSec : null);
     };
     updateCountdown();
@@ -63,35 +74,43 @@ export function QrStaffCameraOverlay({
     return () => clearInterval(timer);
   }, [expiresAt]);
 
-  // 1. Poll khung hình camera từ server: GET /api/v1/jobs/{jobId}/camera-preview.jpg
+  useEffect(() => {
+    setPreviewState(createInitialCameraPreviewState(previewSessionKey));
+  }, [previewSessionKey]);
+
+  // Display frames from the robot camera, scoped to the active QR step.
   useEffect(() => {
     if (phase !== 'scanning' || !active || !jobId) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let abortCtrl: AbortController | null = null;
     let inFlight = false;
+    const freshnessTimer = setInterval(() => {
+      if (!cancelled) {
+        setPreviewState(prev => evaluateCameraPreviewFreshness(prev, getServerNowMs()));
+      }
+    }, 1_000);
 
     const pollFrame = async () => {
       if (cancelled || inFlight) return;
       inFlight = true;
       let nextDelay = CAMERA_POLL_MS;
+      abortCtrl = new AbortController();
       try {
-        const res = await robotMapService.fetchJobCameraPreview(jobId);
+        const res = await robotMapService.fetchJobCameraPreview(jobId, abortCtrl.signal);
         if (cancelled) return;
-        setFrame((prev) => {
-          if (res.status === 200 && res.dataUri) return res;
-          if (prev?.dataUri && res.status === 204) return prev;
-          return res;
-        });
-        if (res.status === 404 || res.status === 401 || res.status === 403) {
+        setPreviewState(prev =>
+          applyCameraPreviewResponse(prev, res, getServerNowMs(), previewSessionKey),
+        );
+        if ([0, 401, 403, 404].includes(res.status) || res.status >= 500) {
           nextDelay = 2_500;
         }
       } finally {
+        abortCtrl = null;
         inFlight = false;
         if (!cancelled) {
-          timer = setTimeout(() => {
-            void pollFrame();
-          }, nextDelay);
+          timer = setTimeout(() => { void pollFrame(); }, nextDelay);
         }
       }
     };
@@ -99,9 +118,11 @@ export function QrStaffCameraOverlay({
     void pollFrame();
     return () => {
       cancelled = true;
+      abortCtrl?.abort();
       if (timer) clearTimeout(timer);
+      clearInterval(freshnessTimer);
     };
-  }, [active, jobId, phase]);
+  }, [active, jobId, phase, previewSessionKey]);
 
   // 2. Theo dõi trạng thái hoàn tất quét QR của Staff
   useEffect(() => {
@@ -156,8 +177,7 @@ export function QrStaffCameraOverlay({
               (snap.selectedStepType !== 'AUTHENTICATE' ||
                 (authJobStepId && snap.selectedJobStepId !== authJobStepId))
             ) {
-              setPhase('success');
-              void playSuccessTing();
+              onDismissRef.current(authJobStepId);
               return;
             }
           }
@@ -207,354 +227,22 @@ export function QrStaffCameraOverlay({
     );
   }
 
-  const formatCountdown = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  };
-
   return (
-    <View style={styles.root} testID="qr-camera-wait-screen">
-      {/* CỘT TRÁI: KHUNG CAMERA ROBOT TỪ SERVER */}
-      <View style={styles.cameraPane}>
-        <View style={styles.cameraFrame}>
-          {frame?.dataUri ? (
-            <Image
-              source={{ uri: frame.dataUri }}
-              style={styles.cameraImage}
-              resizeMode="contain"
-            />
-          ) : (
-            <View style={styles.placeholderWrap}>
-              <ActivityIndicator size="large" color="#38BDF8" />
-              <AppText style={styles.placeholderTitle}>
-                Đang kết nối camera robot từ máy chủ
-              </AppText>
-              <AppText style={styles.placeholderDesc}>
-                {frame?.errorMessage ||
-                  'Đưa mã QR trên điện thoại Staff vào trước camera trên thân robot.'}
-              </AppText>
-            </View>
-          )}
-
-          {/* Khung ngắm 4 góc giúp Staff căn mã QR chuẩn vào camera */}
-          <View style={styles.reticleOverlay} pointerEvents="none">
-            <View style={styles.reticleBox}>
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
-            </View>
-          </View>
-
-          {/* Badge trạng thái LIVE góc trên trái camera */}
-          <View style={styles.topHudBar} pointerEvents="none">
-            <View style={styles.livePill}>
-              <View
-                style={[
-                  styles.liveDot,
-                  { backgroundColor: frame?.dataUri ? '#22C55E' : '#F59E0B' },
-                ]}
-              />
-              <AppText style={styles.livePillText}>
-                {frame?.dataUri ? 'CAMERA ROBOT LIVE' : 'CHỜ CAMERA SERVER'}
-              </AppText>
-            </View>
-
-            {frame?.capturedAt ? (
-              <View style={styles.timePill}>
-                <AppText style={styles.timePillText}>
-                  {new Date(frame.capturedAt).toLocaleTimeString('vi-VN')}
-                </AppText>
-              </View>
-            ) : null}
-          </View>
-        </View>
-      </View>
-
-      {/* CỘT PHẢI: HƯỚNG DẪN STAFF CĂN MÃ QR */}
-      <View style={styles.guidePane}>
-        <View style={styles.guideCard}>
-          <View style={styles.purposePill}>
-            <Ionicons name="qr-code-outline" size={16} color="#0369A1" />
-            <AppText style={styles.purposePillText}>{legLabel}</AppText>
-          </View>
-
-          <AppText style={styles.guideHeading}>Đưa mã QR vào trước camera Robot</AppText>
-          <AppText style={styles.guideLead}>
-            Quan sát khung hình bên trái để căn mã QR trên app Staff nằm chính giữa vùng camera robot.
-          </AppText>
-
-          <View style={styles.stepsList}>
-            <View style={styles.stepItem}>
-              <View style={styles.stepNum}>
-                <AppText style={styles.stepNumText}>1</AppText>
-              </View>
-              <AppText style={styles.stepBody}>Mở mã QR xác thực trên điện thoại Staff</AppText>
-            </View>
-            <View style={styles.stepItem}>
-              <View style={styles.stepNum}>
-                <AppText style={styles.stepNumText}>2</AppText>
-              </View>
-              <AppText style={styles.stepBody}>
-                Giữ điện thoại cách camera robot 15–25 cm, thẳng khung ngắm
-              </AppText>
-            </View>
-            <View style={styles.stepItem}>
-              <View style={styles.stepNum}>
-                <AppText style={styles.stepNumText}>3</AppText>
-              </View>
-              <AppText style={styles.stepBody}>
-                Khi có tiếng "tin" & dấu tích xanh là xác thực xong
-              </AppText>
-            </View>
-          </View>
-
-          <View style={styles.metaFooter}>
-            <AppText variant="caption" style={styles.metaText}>
-              Job: {jobId.slice(0, 8)}...
-            </AppText>
-            {remainingSec !== null ? (
-              <AppText variant="caption" style={styles.timerText}>
-                Còn {formatCountdown(remainingSec)}
-              </AppText>
-            ) : null}
-          </View>
-        </View>
-      </View>
-    </View>
+    <RobotAuthCameraView
+      mode="qr"
+      testID="qr-camera-wait-screen"
+      preview={previewState.sessionKey === previewSessionKey
+        ? previewState
+        : createInitialCameraPreviewState(previewSessionKey)}
+      title={legLabel}
+      remainingSec={remainingSec}
+      statusText="Đang chờ robot xác thực mã QR"
+      expired={remainingSec === 0}
+    />
   );
 }
 
-const CORNER_SIZE = 28;
-const CORNER_BORDER = 4;
-
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    flexDirection: 'row',
-    backgroundColor: colors.background,
-    gap: spacing.md,
-  },
-  cameraPane: {
-    flex: 1.9,
-    height: '100%',
-  },
-  cameraFrame: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-    borderRadius: radii.xl,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#1E293B',
-    position: 'relative',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cameraImage: {
-    width: '100%',
-    height: '100%',
-  },
-  placeholderWrap: {
-    paddingHorizontal: spacing.xxl,
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  placeholderTitle: {
-    color: '#F8FAFC',
-    fontSize: 17,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  placeholderDesc: {
-    color: '#94A3B8',
-    fontSize: 13.5,
-    textAlign: 'center',
-    lineHeight: 20,
-    maxWidth: 420,
-  },
-  reticleOverlay: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reticleBox: {
-    width: 210,
-    height: 210,
-    position: 'relative',
-  },
-  corner: {
-    position: 'absolute',
-    width: CORNER_SIZE,
-    height: CORNER_SIZE,
-    borderColor: '#22D3EE',
-  },
-  cornerTL: {
-    top: 0,
-    left: 0,
-    borderTopWidth: CORNER_BORDER,
-    borderLeftWidth: CORNER_BORDER,
-    borderTopLeftRadius: 8,
-  },
-  cornerTR: {
-    top: 0,
-    right: 0,
-    borderTopWidth: CORNER_BORDER,
-    borderRightWidth: CORNER_BORDER,
-    borderTopRightRadius: 8,
-  },
-  cornerBL: {
-    bottom: 0,
-    left: 0,
-    borderBottomWidth: CORNER_BORDER,
-    borderLeftWidth: CORNER_BORDER,
-    borderBottomLeftRadius: 8,
-  },
-  cornerBR: {
-    bottom: 0,
-    right: 0,
-    borderBottomWidth: CORNER_BORDER,
-    borderRightWidth: CORNER_BORDER,
-    borderBottomRightRadius: 8,
-  },
-  topHudBar: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    right: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  livePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(148, 163, 184, 0.35)',
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  livePillText: {
-    color: '#F8FAFC',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  timePill: {
-    backgroundColor: 'rgba(15, 23, 42, 0.82)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radii.pill,
-  },
-  timePillText: {
-    color: '#CBD5E1',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  guidePane: {
-    flex: 1,
-    height: '100%',
-  },
-  guideCard: {
-    flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: radii.xl,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  purposePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 6,
-    backgroundColor: '#E0F2FE',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-  },
-  purposePillText: {
-    color: '#0369A1',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.4,
-  },
-  guideHeading: {
-    color: colors.textPrimary,
-    fontSize: 19,
-    fontWeight: '800',
-    lineHeight: 25,
-  },
-  guideLead: {
-    color: colors.textSecondary,
-    fontSize: 13.5,
-    lineHeight: 19,
-  },
-  stepsList: {
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  stepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    backgroundColor: colors.surfaceMuted,
-    padding: spacing.sm + 2,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.borderMuted,
-  },
-  stepNum: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.hero,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepNumText: {
-    color: colors.textInverse,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  stepBody: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontWeight: '600',
-    lineHeight: 18,
-  },
-  metaFooter: {
-    marginTop: 'auto',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: spacing.sm,
-    paddingRight: 72,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderMuted,
-  },
-  metaText: {
-    color: colors.textMuted,
-    fontWeight: '600',
-  },
-  timerText: {
-    color: '#0369A1',
-    fontWeight: '800',
-  },
   successRoot: {
     flex: 1,
     backgroundColor: colors.background,
