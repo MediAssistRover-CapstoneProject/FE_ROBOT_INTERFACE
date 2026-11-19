@@ -14,6 +14,12 @@ import { RootStackParamList } from '../../app/navigation';
 import { AppText } from '../../components/ui';
 import { DraggableSosButton } from '../../components/DraggableSosButton';
 import { QrStaffCameraOverlay } from '../../components/QrStaffCameraOverlay';
+import { FaceVerificationScreen } from '../logistics/FaceVerificationScreen';
+import {
+  ActiveAuthOverlayState,
+  resolveAuthenticateOverlayForSnapshot,
+  shouldOpenAuthOverlay,
+} from '../logistics/faceAuthController';
 import {
   BackendHospitalMap,
   MapResponse,
@@ -42,14 +48,6 @@ import {
 import { colors, radii, spacing } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
-
-interface ActiveQrWindowState {
-  jobId: string;
-  authJobStepId: string | null;
-  stepCode: string | null;
-  purpose?: 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
-  expiresAt?: string | null;
-}
 
 export function PatientHubScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -92,55 +90,66 @@ export function PatientHubScreen({ navigation }: Props) {
   const [planEndpointName, setPlanEndpointName] = useState<string | null>(null);
   const [backendGuidance, setBackendGuidance] = useState<NavigationGuidanceResult | null>(null);
 
-  // 4. Trạng thái hiển thị camera chờ Staff quét QR khi robot đang ở bước AUTHENTICATE
-  const [activeQrWindow, setActiveQrWindow] = useState<ActiveQrWindowState | null>(null);
-  const handledQrStepIdsRef = useRef<Set<string>>(new Set());
-  const checkingQrRef = useRef<boolean>(false);
+  // 4. Trạng thái hiển thị giao diện xác thực Staff (QR hoặc Khuôn mặt) khi robot ở bước AUTHENTICATE
+  const [activeAuthOverlay, setActiveAuthOverlay] = useState<ActiveAuthOverlayState | null>(null);
+  const activeAuthOverlayRef = useRef<ActiveAuthOverlayState | null>(null);
+  activeAuthOverlayRef.current = activeAuthOverlay;
+  const handledAuthStepIdsRef = useRef<Set<string>>(new Set());
+  const handledAuthSessionKeysRef = useRef<Set<string>>(new Set());
+  const checkingAuthRef = useRef<boolean>(false);
+  const mountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const pollInFlightRef = useRef<boolean>(false);
   const initialDelayRef = useRef<number | null>(null);
 
-  const syncQrAuthWindow = useCallback(async (snap: RobotSnapshotSummary) => {
+  const syncAuthWindow = useCallback(async (snap: RobotSnapshotSummary) => {
     const jobId = snap.activeJobId;
     const stepId = snap.selectedJobStepId ?? null;
     if (!jobId || snap.selectedStepType !== 'AUTHENTICATE') {
       return;
     }
-    if (stepId && handledQrStepIdsRef.current.has(stepId)) {
+    if (activeAuthOverlayRef.current !== null) {
       return;
     }
-    if (checkingQrRef.current) {
+    if (stepId && handledAuthStepIdsRef.current.has(stepId)) {
       return;
     }
-    checkingQrRef.current = true;
+    if (checkingAuthRef.current) {
+      return;
+    }
+    checkingAuthRef.current = true;
     try {
-      const challenge = await robotApiService.getStaffQrScanWindow(jobId);
-      if (challenge) {
-        if (handledQrStepIdsRef.current.has(challenge.authJobStepId)) {
-          return;
-        }
-        setActiveQrWindow({
-          jobId: challenge.jobId,
-          authJobStepId: challenge.authJobStepId,
-          stepCode: snap.selectedStepCode ?? null,
-          purpose: challenge.purpose,
-          expiresAt: challenge.expiresAt,
-        });
+      const overlay = await resolveAuthenticateOverlayForSnapshot(snap, {
+        handledStepIds: handledAuthStepIdsRef.current,
+        handledSessionKeys: handledAuthSessionKeysRef.current,
+        expectedRobotId: apiClient.getRobotId() || snap.robotId || null,
+        checkJobStepStatus: (id, sid) => robotMapService.checkJobQrStepStatus(id, sid),
+        getQrWindow: (id) => robotApiService.getStaffQrScanWindow(id),
+        getFaceWindow: (id) => robotApiService.getStaffFaceScanWindow(id),
+        loadPartyInfo: (reqId, purpose, expectedAccountId) =>
+          robotMapService.loadDeliveryAuthPartyInfo(reqId, purpose, expectedAccountId),
+      });
+      if (!mountedRef.current || !overlay) {
         return;
       }
-
-      if (stepId) {
-        const jobStep = await robotMapService.checkJobQrStepStatus(jobId, stepId);
-        if (jobStep?.stepStatus === 'RUNNING') {
-          setActiveQrWindow({
-            jobId,
-            authJobStepId: stepId,
-            stepCode: snap.selectedStepCode ?? null,
-          });
-        }
-      }
+      setActiveAuthOverlay((prev) =>
+        shouldOpenAuthOverlay(
+          prev,
+          overlay,
+          handledAuthStepIdsRef.current,
+          handledAuthSessionKeysRef.current,
+        )
+          ? overlay
+          : prev,
+      );
     } finally {
-      checkingQrRef.current = false;
+      checkingAuthRef.current = false;
     }
   }, []);
 
@@ -173,10 +182,10 @@ export function PatientHubScreen({ navigation }: Props) {
       }
 
       if (snap.activeJobId && snap.selectedStepType === 'AUTHENTICATE') {
-        void syncQrAuthWindow(snap);
+        void syncAuthWindow(snap);
       }
     },
-    [syncQrAuthWindow]
+    [syncAuthWindow]
   );
 
   // Tải gói dữ liệu Bản đồ lúc khởi tạo (tái sử dụng snapshot ban đầu, tránh gọi trùng)
@@ -218,9 +227,9 @@ export function PatientHubScreen({ navigation }: Props) {
   }, [applySnapshotSummary]);
 
   // Poll thông minh theo chu kỳ setTimeout nối tiếp (2.5s khi chạy, 8s khi IDLE),
-  // chỉ chạy khi app active + màn hình Map đang focus + không ở màn camera QR
+  // chỉ chạy khi app active + màn hình Map đang focus + không ở màn xác thực QR/Face
   useEffect(() => {
-    if (!isMapLoaded || !isFocused || !isAppActive || activeQrWindow !== null) {
+    if (!isMapLoaded || !isFocused || !isAppActive || activeAuthOverlay !== null) {
       return;
     }
 
@@ -263,7 +272,7 @@ export function PatientHubScreen({ navigation }: Props) {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeMap.mapId, activeQrWindow, applySnapshotSummary, isAppActive, isFocused, isMapLoaded]);
+  }, [activeAuthOverlay, activeMap.mapId, applySnapshotSummary, isAppActive, isFocused, isMapLoaded]);
 
   const mapEndpoints = useMemo(() => {
     const filtered = endpoints.filter(
@@ -350,12 +359,27 @@ export function PatientHubScreen({ navigation }: Props) {
     robotPose,
   ]);
 
-  const handleQrCompleteOrDismiss = useCallback((stepId: string | null) => {
-    if (stepId) {
-      handledQrStepIdsRef.current.add(stepId);
-    }
-    setActiveQrWindow(null);
-  }, []);
+  const handleAuthCompleteOrDismiss = useCallback(
+    (
+      stepId: string | null,
+      _reasonOrSession?: string | null,
+      maybeSessionKey?: string | null,
+    ) => {
+      if (stepId) {
+        handledAuthStepIdsRef.current.add(stepId);
+      }
+      const sessionKey = maybeSessionKey ?? _reasonOrSession;
+      if (
+        typeof sessionKey === 'string' &&
+        sessionKey.includes(':')
+      ) {
+        handledAuthSessionKeysRef.current.add(sessionKey);
+      }
+      activeAuthOverlayRef.current = null;
+      setActiveAuthOverlay(null);
+    },
+    [],
+  );
 
   const hasActiveRoute = Boolean(plannedPath || (guidance && guidance.state !== 'IDLE'));
   const padTop = Math.max(insets.top, spacing.sm);
@@ -383,118 +407,153 @@ export function PatientHubScreen({ navigation }: Props) {
         },
       ]}
     >
-      {activeQrWindow ? (
-        <QrStaffCameraOverlay
-          jobId={activeQrWindow.jobId}
-          authJobStepId={activeQrWindow.authJobStepId}
-          stepCode={activeQrWindow.stepCode}
-          purpose={activeQrWindow.purpose}
-          expiresAt={activeQrWindow.expiresAt}
-          active={isFocused && isAppActive}
-          onSuccessComplete={handleQrCompleteOrDismiss}
-          onDismiss={handleQrCompleteOrDismiss}
-        />
-      ) : (
-        <>
-          {/* ======================================================== */}
-          {/* CỘT TRÁI: BẢN ĐỒ OTTO AMR CHỈ XEM VỊ TRÍ & PATH          */}
-          {/* ======================================================== */}
-          <View style={styles.landscapeMapColumn}>
-            <View style={styles.mapCard}>
-              <BackendHospitalMap
-                interactive={false}
-                skipImageFetch={!isMapLoaded}
-                map={activeMap}
-                metadata={mapMetadata}
-                endpoints={endpoints}
-                zones={zones}
-                presentation={presentationDoc}
-                token={authToken}
-                selectedEndpointId={hasActiveRoute ? planEndpointId : null}
-                robotPose={robotPose}
-                isPoseLive={isPoseLive}
-                plannedPath={plannedPath}
-                guidance={guidance}
-              />
+      {/* ======================================================== */}
+      {/* CỘT TRÁI: BẢN ĐỒ OTTO AMR (GIỮ NGUYÊN TRẠNG THÁI KHI QUÉT)*/}
+      {/* ======================================================== */}
+      <View style={styles.landscapeMapColumn}>
+        <View style={styles.mapCard}>
+          <BackendHospitalMap
+            interactive={false}
+            skipImageFetch={!isMapLoaded}
+            map={activeMap}
+            metadata={mapMetadata}
+            endpoints={endpoints}
+            zones={zones}
+            presentation={presentationDoc}
+            token={authToken}
+            selectedEndpointId={hasActiveRoute ? planEndpointId : null}
+            robotPose={robotPose}
+            isPoseLive={isPoseLive}
+            plannedPath={plannedPath}
+            guidance={guidance}
+          />
+        </View>
+      </View>
+
+      {/* ======================================================== */}
+      {/* CỘT PHẢI: TOÀN BỘ KHÔNG GIAN DÀNH CHO LỘ TRÌNH CHỈ ĐƯỜNG */}
+      {/* ======================================================== */}
+      <View style={styles.landscapeControlColumn}>
+        <ScrollView
+          style={styles.infoScroll}
+          contentContainerStyle={styles.infoScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.infoCard}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.sectionIconSquare}>
+                <Ionicons name="trail-sign" size={16} color={colors.textInverse} />
+              </View>
+              <AppText variant="caption" style={styles.cardHeaderTitle}>
+                LỘ TRÌNH CHỈ ĐƯỜNG
+              </AppText>
             </View>
-          </View>
 
-          {/* ======================================================== */}
-          {/* CỘT PHẢI: TOÀN BỘ KHÔNG GIAN DÀNH CHO LỘ TRÌNH CHỈ ĐƯỜNG */}
-          {/* ======================================================== */}
-          <View style={styles.landscapeControlColumn}>
-            <ScrollView
-              style={styles.infoScroll}
-              contentContainerStyle={styles.infoScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={styles.infoCard}>
-                <View style={styles.cardHeaderRow}>
-                  <View style={styles.sectionIconSquare}>
-                    <Ionicons name="trail-sign" size={16} color={colors.textInverse} />
-                  </View>
-                  <AppText variant="caption" style={styles.cardHeaderTitle}>
-                    LỘ TRÌNH CHỈ ĐƯỜNG
-                  </AppText>
-                </View>
-
-                {hasActiveRoute ? (
-                  <View style={styles.routeActiveBox}>
-                    <View style={styles.roomDetailBox}>
-                      {activeDestinationEndpoint?.endpointCode ? (
-                        <View style={styles.roomCodePill}>
-                          <AppText style={styles.roomCodePillText}>
-                            {activeDestinationEndpoint.endpointCode}
-                          </AppText>
-                        </View>
-                      ) : null}
-                      <View style={{ flex: 1 }}>
-                        <AppText variant="heading" style={styles.roomNameText} numberOfLines={2}>
-                          {activeDestinationLabel}
-                        </AppText>
-                      </View>
-                    </View>
-
-                    {guidance ? (
-                      <View style={styles.guidancePreviewBox}>
-                        <View style={styles.guidanceDirectionRow}>
-                          <View style={styles.guidanceSymbolBadge}>
-                            <AppText style={styles.guidanceSymbolText}>
-                              {guidance.state === 'ARRIVED'
-                                ? '✓'
-                                : guidanceSymbol(guidance.direction)}
-                            </AppText>
-                          </View>
-                          <View style={{ flex: 1, gap: 4 }}>
-                            <AppText style={styles.guidancePrimaryText}>
-                              {guidance.primaryText}
-                            </AppText>
-                            {guidance.secondaryText ? (
-                              <AppText variant="caption" style={styles.guidanceSecondaryText}>
-                                {guidance.secondaryText}
-                              </AppText>
-                            ) : null}
-                          </View>
-                        </View>
-                      </View>
-                    ) : null}
-                  </View>
-                ) : (
-                  <View style={styles.idleRouteNotice}>
-                    <Ionicons name="eye-outline" size={20} color={colors.textSecondary} />
-                    <View style={{ flex: 1, gap: 4 }}>
-                      <AppText style={styles.idleNoticeTitle}>Chưa có lộ trình chỉ đường</AppText>
-                      <AppText variant="caption" style={styles.idleNoticeSub}>
-                        Bản đồ đang hiển thị vị trí robot theo thời gian thực. Khi nhận nhiệm vụ dẫn đường hoặc giao hàng, lộ trình chỉ dẫn sẽ tự động hiện tại đây.
+            {hasActiveRoute ? (
+              <View style={styles.routeActiveBox}>
+                <View style={styles.roomDetailBox}>
+                  {activeDestinationEndpoint?.endpointCode ? (
+                    <View style={styles.roomCodePill}>
+                      <AppText style={styles.roomCodePillText}>
+                        {activeDestinationEndpoint.endpointCode}
                       </AppText>
                     </View>
+                  ) : null}
+                  <View style={{ flex: 1 }}>
+                    <AppText variant="heading" style={styles.roomNameText} numberOfLines={2}>
+                      {activeDestinationLabel}
+                    </AppText>
                   </View>
-                )}
+                </View>
+
+                {guidance ? (
+                  <View style={styles.guidancePreviewBox}>
+                    <View style={styles.guidanceDirectionRow}>
+                      <View style={styles.guidanceSymbolBadge}>
+                        <AppText style={styles.guidanceSymbolText}>
+                          {guidance.state === 'ARRIVED'
+                            ? '✓'
+                            : guidanceSymbol(guidance.direction)}
+                        </AppText>
+                      </View>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <AppText style={styles.guidancePrimaryText}>
+                          {guidance.primaryText}
+                        </AppText>
+                        {guidance.secondaryText ? (
+                          <AppText variant="caption" style={styles.guidanceSecondaryText}>
+                            {guidance.secondaryText}
+                          </AppText>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
               </View>
-            </ScrollView>
+            ) : (
+              <View style={styles.idleRouteNotice}>
+                <Ionicons name="eye-outline" size={20} color={colors.textSecondary} />
+                <View style={{ flex: 1, gap: 4 }}>
+                  <AppText style={styles.idleNoticeTitle}>Chưa có lộ trình chỉ đường</AppText>
+                  <AppText variant="caption" style={styles.idleNoticeSub}>
+                    Bản đồ đang hiển thị vị trí robot theo thời gian thực. Khi nhận nhiệm vụ dẫn đường hoặc giao hàng, lộ trình chỉ dẫn sẽ tự động hiện tại đây.
+                  </AppText>
+                </View>
+              </View>
+            )}
           </View>
-        </>
-      )}
+        </ScrollView>
+      </View>
+
+      {/* Lớp phủ xác thực QR / Camera Khuôn mặt (giữ nguyên map mounted bên dưới) */}
+      {activeAuthOverlay ? (
+        <View
+          style={[
+            styles.authOverlayContainer,
+            {
+              paddingTop: padTop,
+              paddingBottom: padBottom,
+              paddingLeft: padLeft,
+              paddingRight: padRight,
+            },
+          ]}
+        >
+          {activeAuthOverlay.method === 'FACE_VERIFICATION' ? (
+            <FaceVerificationScreen
+              key={`FACE:${activeAuthOverlay.jobId}:${activeAuthOverlay.authJobStepId ?? ''}:${activeAuthOverlay.sessionId ?? ''}`}
+              jobId={activeAuthOverlay.jobId}
+              authJobStepId={activeAuthOverlay.authJobStepId}
+              sessionId={activeAuthOverlay.sessionId}
+              robotId={activeAuthOverlay.robotId}
+              stepCode={activeAuthOverlay.stepCode}
+              purpose={activeAuthOverlay.purpose}
+              expiresAt={activeAuthOverlay.expiresAt}
+              startedAt={activeAuthOverlay.startedAt}
+              requestCode={activeAuthOverlay.requestCode}
+              serviceRequestId={activeAuthOverlay.serviceRequestId}
+              expectedAccountId={activeAuthOverlay.expectedAccountId}
+              expectedPersonName={activeAuthOverlay.expectedPersonName}
+              pickupLocationLabel={activeAuthOverlay.pickupLocationLabel}
+              deliveryLocationLabel={activeAuthOverlay.deliveryLocationLabel}
+              active={isFocused && isAppActive}
+              onSuccessComplete={handleAuthCompleteOrDismiss}
+              onDismiss={handleAuthCompleteOrDismiss}
+            />
+          ) : (
+            <QrStaffCameraOverlay
+              key={`QR:${activeAuthOverlay.jobId}:${activeAuthOverlay.authJobStepId ?? ''}:${activeAuthOverlay.purpose ?? ''}`}
+              jobId={activeAuthOverlay.jobId}
+              authJobStepId={activeAuthOverlay.authJobStepId}
+              stepCode={activeAuthOverlay.stepCode}
+              purpose={activeAuthOverlay.purpose}
+              expiresAt={activeAuthOverlay.expiresAt}
+              active={isFocused && isAppActive}
+              onSuccessComplete={handleAuthCompleteOrDismiss}
+              onDismiss={handleAuthCompleteOrDismiss}
+            />
+          )}
+        </View>
+      ) : null}
 
       {/* Nút SOS hình tròn nổi, có thể kéo di chuyển tự do trên màn hình tablet */}
       <DraggableSosButton
@@ -516,6 +575,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: colors.background,
     position: 'relative',
+  },
+  authOverlayContainer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: colors.background,
+    zIndex: 100,
+    elevation: 6,
   },
   landscapeMapColumn: {
     flex: 2.3,

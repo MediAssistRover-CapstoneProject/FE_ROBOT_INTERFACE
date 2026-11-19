@@ -1,5 +1,7 @@
 export type DeliveryPurpose = 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
 
+export type DeliveryAuthMethod = 'QR_CODE' | 'FACE_VERIFICATION' | 'STAFF_CONFIRMATION';
+
 export type DeliveryJobStatus =
   | 'QUEUED' | 'ACCEPTED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED' | 'RECOVERY_REQUIRED';
 
@@ -51,6 +53,13 @@ export interface DeliveryQrChallenge {
   authJobStepId: string;
   purpose: DeliveryPurpose;
   qrPayload: string;
+  expiresAt: string;
+}
+
+export interface DeliveryFaceWindow {
+  jobId: string;
+  authJobStepId: string;
+  sessionId: string;
   expiresAt: string;
 }
 
@@ -142,4 +151,84 @@ export function selectDeliveryChallenge(
   const matches = (stage === 'authSender' && challenge.purpose === 'DELIVERY_SENDER')
     || (stage === 'authReceiver' && challenge.purpose === 'DELIVERY_RECEIVER');
   return matches ? challenge : null;
+}
+
+function normalizeAuthMethod(raw: unknown): DeliveryAuthMethod | null {
+  return raw === 'QR_CODE' || raw === 'FACE_VERIFICATION' || raw === 'STAFF_CONFIRMATION'
+    ? raw
+    : null;
+}
+
+export function getDeliveryAuthMethod(
+  missionOrStep: DeliveryMission | DeliveryStep | null | undefined,
+  fallbackMethod?: string | null,
+): DeliveryAuthMethod | null {
+  const step =
+    missionOrStep && 'jobStatus' in missionOrStep
+      ? missionOrStep.step
+      : (missionOrStep as DeliveryStep | null | undefined);
+  const byInput = normalizeAuthMethod(step?.resolvedInputsJson?.method);
+  if (byInput) return byInput;
+
+  const action = step?.resultJson?.action;
+  if (action === 'AWAIT_FACE_VERIFICATION') return 'FACE_VERIFICATION';
+  if (action === 'AWAIT_STAFF_VERIFICATION') return 'QR_CODE';
+
+  return normalizeAuthMethod(fallbackMethod);
+}
+
+export function selectDeliveryFaceWindow(
+  mission: DeliveryMission | null,
+  faceWindow: DeliveryFaceWindow | null,
+  now: number,
+): DeliveryFaceWindow | null {
+  if (
+    !mission ||
+    !faceWindow ||
+    faceWindow.jobId !== mission.jobId ||
+    faceWindow.authJobStepId !== mission.step?.jobStepId ||
+    getDeliveryAuthMethod(mission) !== 'FACE_VERIFICATION' ||
+    !faceWindow.sessionId.trim() ||
+    !(Date.parse(faceWindow.expiresAt) > now)
+  ) {
+    return null;
+  }
+  const stage = resolveDeliveryStage(mission);
+  return stage === 'authReceiver' ? faceWindow : null;
+}
+
+export function isAuthenticateStepVerifiedForLeg(
+  step: DeliveryStep | null | undefined,
+  expectedStepId: string,
+  expectedPurpose: DeliveryPurpose,
+  expectedMethod?: DeliveryAuthMethod | null,
+): boolean {
+  if (!step || step.jobStepId !== expectedStepId || step.stepTypeSnapshot !== 'AUTHENTICATE') {
+    return false;
+  }
+  if (step.status !== 'SUCCEEDED') {
+    return false;
+  }
+  const result = step.resultJson;
+  if (!result || result.verified === false) {
+    return false;
+  }
+  if (result.verified !== true && result.authenticated !== true) {
+    return false;
+  }
+  const resolvedPurpose = step.resolvedInputsJson?.purpose;
+  const resultPurpose = result.purpose;
+  if (resolvedPurpose && resultPurpose && resolvedPurpose !== resultPurpose) {
+    return false;
+  }
+  if (getDeliveryPurpose(step) !== expectedPurpose) {
+    return false;
+  }
+  if (expectedMethod) {
+    const stepMethod = getDeliveryAuthMethod(step);
+    if (stepMethod && stepMethod !== expectedMethod) {
+      return false;
+    }
+  }
+  return true;
 }

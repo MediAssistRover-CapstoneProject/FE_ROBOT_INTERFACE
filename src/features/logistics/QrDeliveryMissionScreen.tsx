@@ -8,7 +8,13 @@ import { DeliveryConnectionForm } from './DeliveryConnectionForm';
 import { DeliveryConnection, createDeliveryReader } from './deliveryReader';
 import { DeliveryQrCode } from './DeliveryQrCode';
 import { DeliveryTwoQrFlow } from './DeliveryTwoQrFlow';
-import { DeliveryParty, DeliveryReader, DeliveryStage, resolveDeliveryStage } from './deliveryMission';
+import {
+  DeliveryParty,
+  DeliveryReader,
+  DeliveryStage,
+  getDeliveryAuthMethod,
+  resolveDeliveryStage,
+} from './deliveryMission';
 import { useDeliveryMission } from './useDeliveryMission';
 
 const stages: Record<DeliveryStage, { title: string; instruction: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -106,8 +112,23 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
   const isLandscape = width > 768;
   const qrSize = Math.max(180, Math.min(260, Math.round(width * 0.28)));
   const stage = mission ? resolveDeliveryStage(mission) : null;
-  const summary = stage ? stages[stage] : null;
-  const waitingQr = stage === 'authSender' || stage === 'authReceiver';
+  const authMethod = mission ? getDeliveryAuthMethod(mission) : null;
+  const baseSummary = stage ? stages[stage] : null;
+  const waitingAuth = stage === 'authSender' || stage === 'authReceiver';
+  const waitingFace = waitingAuth && authMethod === 'FACE_VERIFICATION';
+  const waitingQr = waitingAuth && !waitingFace;
+  const summary =
+    baseSummary && waitingFace
+      ? {
+          title:
+            stage === 'authSender'
+              ? 'Xác thực khuôn mặt người gửi'
+              : 'Xác thực khuôn mặt người nhận',
+          instruction:
+            'Nhân viên được giao đứng trước camera trên thân robot (cách 50–80 cm) để Raspberry Pi xác thực khuôn mặt qua máy chủ trước khi mở khoang.',
+          icon: 'person-circle-outline' as const,
+        }
+      : baseSummary;
 
   const isSenderLeg = stage === 'authSender' || stage === 'toSender' || stage === 'waitingSender' || stage === 'unlockingSender' || stage === 'loading' || stage === 'securingSender';
   const isReceiverLeg = stage === 'authReceiver' || stage === 'transporting' || stage === 'unlockingReceiver' || stage === 'pickup' || stage === 'securingReceiver';
@@ -231,6 +252,30 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                   {summary.instruction}
                 </AppText>
 
+                {/* Hướng dẫn xác thực khuôn mặt khi AUTHENTICATE.method === FACE_VERIFICATION */}
+                {waitingFace && (
+                  <View style={styles.qrGuidanceBlock}>
+                    <View style={styles.qrGuidanceRow}>
+                      <Ionicons name="person-outline" size={20} color={colors.hero} />
+                      <View style={{ flex: 1 }}>
+                        <AppText style={styles.guidanceHeading}>
+                          Xác thực khuôn mặt ({stage === 'authSender' ? 'Chặng gửi - Điểm A' : 'Chặng nhận - Điểm B'})
+                        </AppText>
+                        <AppText style={styles.guidanceDetail}>
+                          Nhân viên {stage === 'authSender' ? 'GỬI HÀNG' : 'NHẬN HÀNG'} nhìn thẳng vào camera trên thân Robot (khoảng cách 50–80 cm, không đeo khẩu trang). Raspberry Pi sẽ tự động chụp ảnh và gửi lên BE so khớp với avatar đã duyệt.
+                        </AppText>
+                      </View>
+                    </View>
+
+                    <View style={styles.piHardwareBadge}>
+                      <Ionicons name="hardware-chip-outline" size={14} color={colors.textSecondary} />
+                      <AppText variant="caption" style={styles.piHardwareBadgeText}>
+                        Khoang hàng chỉ mở khóa sau khi BE xác thực khuôn mặt thành công và cấp quyền trực tiếp cho Pi. Tablet chỉ hiển thị trạng thái thật.
+                      </AppText>
+                    </View>
+                  </View>
+                )}
+
                 {/* Hướng dẫn xác thực QR hai chiều cho đúng chặng gửi / nhận (D1) */}
                 {waitingQr && (
                   <View style={styles.qrGuidanceBlock}>
@@ -312,6 +357,18 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                     Hết hạn: {new Date(challenge.expiresAt).toLocaleTimeString()}
                   </AppText>
                 </View>
+              ) : waitingFace ? (
+                <View style={styles.waitingPlaceholder}>
+                  <Ionicons name="scan-circle-outline" size={56} color={colors.hero} />
+                  <AppText variant="heading" style={{ textAlign: 'center' }}>
+                    {stage === 'authSender'
+                      ? 'Đang xác thực khuôn mặt người gửi'
+                      : 'Đang xác thực khuôn mặt người nhận'}
+                  </AppText>
+                  <AppText variant="caption" style={styles.centerMuted}>
+                    Camera trên thân robot (Raspberry Pi) đang chụp và gửi ảnh đối chiếu với hệ thống. Không cần quét mã QR ở bước này.
+                  </AppText>
+                </View>
               ) : waitingQr && !challenge && mission.step?.resolvedInputsJson?.method === 'QR_CODE' ? (
                 <Notice message="Chưa có mã QR hợp lệ cho chặng này. Đang chờ hệ thống cập nhật." />
               ) : (
@@ -321,7 +378,7 @@ function DeliveryMissionDisplay({ reader, connection, limited, onEdit }: {
                     {stage === 'transporting' ? 'Đang trên đường di chuyển' : 'Đang xử lý nhiệm vụ'}
                   </AppText>
                   <AppText variant="caption" style={styles.centerMuted}>
-                    Mã xác thực QR sẽ hiển thị tự động khi robot đến đúng điểm dừng.
+                    Bước xác thực ({authMethod === 'FACE_VERIFICATION' ? 'Khuôn mặt' : 'QR'}) sẽ mở tự động khi robot đến đúng điểm dừng.
                   </AppText>
                 </View>
               )}

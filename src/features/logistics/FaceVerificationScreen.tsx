@@ -1,1061 +1,1092 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Animated,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  View,
-} from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Image, StyleSheet, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { CameraView, useCameraPermissions } from 'expo-camera';
 import { AppText } from '../../components/ui';
-import { LogisticsStepper } from '../../components/LogisticsStepper';
+import { robotApiService } from '../../services/api';
+import { robotMapService } from '../../services/api/robotMapService';
+import { getServerNowMs } from '../../services/api/serverClock';
+import type { DeliveryAuthPurpose } from '../../services/api/types';
+import { colors, radii, spacing } from '../../theme';
+import { playSuccessTing } from '../../utils/playSuccessTing';
+import {
+  CameraPreviewState,
+  applyCameraPreviewResponse,
+  createInitialCameraPreviewState,
+  evaluateCameraPreviewFreshness,
+  getCameraFeedLabel,
+} from './cameraPreviewState';
+import {
+  FaceAuthController,
+  FaceAuthInitialContext,
+  FaceAuthPhase,
+  FaceAuthViewState,
+  buildFaceAuthSessionKey,
+} from './faceAuthController';
 
-type FaceStep = 1 | 2 | 3 | 4 | 5;
+export interface FaceVerificationScreenProps {
+  jobId?: string | null;
+  authJobStepId?: string | null;
+  sessionId?: string | null;
+  robotId?: string | null;
+  stepCode?: string | null;
+  purpose?: DeliveryAuthPurpose;
+  expiresAt?: string | null;
+  startedAt?: string | null;
+  requestCode?: string | null;
+  serviceRequestId?: string | null;
+  expectedAccountId?: string | null;
+  expectedPersonName?: string | null;
+  pickupLocationLabel?: string | null;
+  deliveryLocationLabel?: string | null;
+  active?: boolean;
+  onSuccessComplete?: (completedStepId: string | null, sessionKey?: string | null) => void;
+  onDismiss?: (
+    stepId: string | null,
+    reason?: 'expired' | 'cancelled' | 'step_changed',
+    sessionKey?: string | null,
+  ) => void;
+}
 
-export function FaceVerificationScreen() {
-  const insets = useSafeAreaInsets();
-  const [faceStep, setFaceStep] = useState<FaceStep>(1);
-  const [permission, requestPermission] = useCameraPermissions();
-  const [scanProgress, setScanProgress] = useState(78);
+const CAMERA_PREVIEW_POLL_MS = 650;
+const CAMERA_FRESHNESS_CHECK_MS = 1_000;
+const SUCCESS_DISPLAY_MS = 1_800;
+const EXPIRED_DISMISS_MS = 2_200;
 
-  // Animated laser scan line
-  const laserAnim = useRef(new Animated.Value(0)).current;
+function formatClockSec(sec: number): string {
+  const safe = Math.max(0, Math.floor(sec));
+  const m = Math.floor(safe / 60);
+  const s = safe % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+type ProgressionStageKey = 'connecting' | 'scanning' | 'verifying' | 'outcome';
+
+function resolveProgressionInfo(state: FaceAuthViewState): {
+  activeStage: ProgressionStageKey;
+  outcomeLabel: string;
+  outcomeTone: 'neutral' | 'success' | 'warning' | 'danger';
+  headlineStatus: string;
+} {
+  if (state.phase === 'verified') {
+    return {
+      activeStage: 'outcome',
+      outcomeLabel: 'Thành công',
+      outcomeTone: 'success',
+      headlineStatus: 'Thành công',
+    };
+  }
+  if (state.phase === 'expired') {
+    return {
+      activeStage: 'outcome',
+      outcomeLabel: 'Hết hạn',
+      outcomeTone: 'danger',
+      headlineStatus: 'Hết hạn',
+    };
+  }
+  if (state.phase === 'cancelled' || state.phase === 'step_changed') {
+    return {
+      activeStage: 'outcome',
+      outcomeLabel: 'Đã dừng',
+      outcomeTone: 'danger',
+      headlineStatus: 'Đã dừng',
+    };
+  }
+  if (state.lastVerifyReason && state.lastVerifyReason !== 'MATCH') {
+    return {
+      activeStage: 'outcome',
+      outcomeLabel: 'Chưa khớp',
+      outcomeTone: 'warning',
+      headlineStatus: 'Chưa khớp · Vui lòng thử lại',
+    };
+  }
+  if (state.phase === 'verifying') {
+    return {
+      activeStage: 'verifying',
+      outcomeLabel: 'Thành công / Chưa khớp / Hết hạn',
+      outcomeTone: 'neutral',
+      headlineStatus: 'Đang xác thực',
+    };
+  }
+  if (state.phase === 'scanning' && state.sessionId) {
+    return {
+      activeStage: 'scanning',
+      outcomeLabel: 'Thành công / Chưa khớp / Hết hạn',
+      outcomeTone: 'neutral',
+      headlineStatus: 'Đang quét',
+    };
+  }
+  return {
+    activeStage: 'connecting',
+    outcomeLabel: 'Thành công / Chưa khớp / Hết hạn',
+    outcomeTone: 'neutral',
+    headlineStatus: 'Đang kết nối',
+  };
+}
+
+export function FaceVerificationScreen({
+  jobId,
+  authJobStepId,
+  sessionId,
+  robotId,
+  stepCode,
+  purpose = 'DELIVERY_RECEIVER',
+  expiresAt,
+  startedAt,
+  requestCode,
+  serviceRequestId,
+  expectedAccountId,
+  expectedPersonName,
+  pickupLocationLabel,
+  deliveryLocationLabel,
+  active = true,
+  onSuccessComplete,
+  onDismiss,
+}: FaceVerificationScreenProps) {
+  const controllerRef = useRef<FaceAuthController | null>(null);
+  const successNotifiedRef = useRef(false);
+  const lastBoundPropKeyRef = useRef<string>('');
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  const onSuccessRef = useRef(onSuccessComplete);
+  onSuccessRef.current = onSuccessComplete;
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
+
+  const initialSessionKey = buildFaceAuthSessionKey(jobId, authJobStepId, sessionId);
+  const [previewState, setPreviewState] = useState<CameraPreviewState>(() =>
+    createInitialCameraPreviewState(initialSessionKey),
+  );
+
+  const initialContextRef = useRef<FaceAuthInitialContext | null>(null);
+  initialContextRef.current =
+    jobId && authJobStepId
+      ? {
+          jobId,
+          authJobStepId,
+          sessionId: sessionId ?? null,
+          robotId: robotId ?? null,
+          purpose,
+          stepCode: stepCode ?? null,
+          expiresAt: expiresAt ?? null,
+          startedAt: startedAt ?? null,
+          requestCode: requestCode ?? null,
+          serviceRequestId: serviceRequestId ?? null,
+          expectedAccountId: expectedAccountId ?? null,
+          expectedPersonName: expectedPersonName ?? null,
+          pickupLocationLabel: pickupLocationLabel ?? null,
+          deliveryLocationLabel: deliveryLocationLabel ?? null,
+        }
+      : null;
+
+  const [viewState, setViewState] = useState<FaceAuthViewState>(() => ({
+    phase: sessionId ? 'scanning' : 'waiting_window',
+    jobId: jobId ?? '',
+    authJobStepId: authJobStepId ?? '',
+    sessionId: sessionId ?? null,
+    sessionKey: initialSessionKey,
+    robotId: robotId ?? null,
+    purpose,
+    stepCode: stepCode ?? null,
+    expiresAt: expiresAt ?? null,
+    windowStartedAt: startedAt ?? null,
+    remainingSec: expiresAt
+      ? Math.max(0, Math.floor((Date.parse(expiresAt) - getServerNowMs()) / 1000))
+      : null,
+    elapsedSec: startedAt
+      ? Math.max(0, Math.floor((getServerNowMs() - Date.parse(startedAt)) / 1000))
+      : null,
+    requestCode: requestCode ?? null,
+    serviceRequestId: serviceRequestId ?? null,
+    expectedAccountId: expectedAccountId ?? null,
+    expectedPersonName: expectedPersonName ?? null,
+    pickupLocationLabel: pickupLocationLabel ?? null,
+    deliveryLocationLabel: deliveryLocationLabel ?? null,
+    verifyInFlight: false,
+    lastVerifyReason: null,
+    feedbackMessage: sessionId
+      ? null
+      : 'Đang chờ máy chủ mở cửa sổ quét khuôn mặt...',
+    isOffline: false,
+    compartmentLocked: true,
+  }));
+
+  // 1. Khởi tạo FaceAuthController duy nhất cho cặp (jobId, authJobStepId);
+  // rerender hay tạm ẩn app không làm reset expiresAt hoặc mở trùng phiên.
+  useEffect(() => {
+    if (!jobId || !authJobStepId || !initialContextRef.current) {
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      lastBoundPropKeyRef.current = '';
+      return;
+    }
+
+    successNotifiedRef.current = false;
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    let successTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const initialCtx = initialContextRef.current;
+    lastBoundPropKeyRef.current = buildFaceAuthSessionKey(
+      initialCtx.jobId,
+      initialCtx.authJobStepId,
+      initialCtx.sessionId,
+    );
+
+    const controller = new FaceAuthController({
+      context: initialCtx,
+      deps: {
+        getFaceWindow: (id) =>
+          robotApiService.getStaffFaceScanWindow(id, { throwOnError: true }),
+        checkJobStepStatus: (id, sid) => robotMapService.checkJobQrStepStatus(id, sid),
+        loadPartyInfo: (reqId, p, accId) =>
+          robotMapService.loadDeliveryAuthPartyInfo(reqId, p, accId),
+      },
+      onStateChange: (next) => {
+        setViewState(next);
+      },
+      onVerified: (completedStepId, verifiedSessionKey) => {
+        if (successNotifiedRef.current) return;
+        successNotifiedRef.current = true;
+        void playSuccessTing();
+        successTimer = setTimeout(() => {
+          onSuccessRef.current?.(completedStepId, verifiedSessionKey ?? null);
+        }, SUCCESS_DISPLAY_MS);
+      },
+      onDismiss: (stepId, reason, dismissedSessionKey) => {
+        if (reason === 'expired') {
+          dismissTimer = setTimeout(() => {
+            onDismissRef.current?.(stepId, reason, dismissedSessionKey ?? null);
+          }, EXPIRED_DISMISS_MS);
+          return;
+        }
+        onDismissRef.current?.(stepId, reason, dismissedSessionKey ?? null);
+      },
+    });
+
+    controllerRef.current = controller;
+    controller.setActive(activeRef.current);
+    controller.start();
+
+    return () => {
+      if (dismissTimer) clearTimeout(dismissTimer);
+      if (successTimer) clearTimeout(successTimer);
+      controller.dispose();
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+      }
+    };
+  }, [authJobStepId, jobId]);
+
+  // Nếu parent nhận một sessionId hoàn toàn mới trên cùng step -> rebind rõ ràng, xóa ảnh cũ.
+  useEffect(() => {
+    const ctrl = controllerRef.current;
+    if (!ctrl || !jobId || !authJobStepId || !sessionId || !initialContextRef.current) return;
+    const incomingPropKey = buildFaceAuthSessionKey(jobId, authJobStepId, sessionId);
+    const currentCtrlKey = ctrl.getState().sessionKey;
+    if (
+      incomingPropKey !== lastBoundPropKeyRef.current &&
+      incomingPropKey !== currentCtrlKey
+    ) {
+      lastBoundPropKeyRef.current = incomingPropKey;
+      setPreviewState(createInitialCameraPreviewState(incomingPropKey));
+      ctrl.rebindContext(initialContextRef.current);
+    }
+  }, [authJobStepId, jobId, sessionId]);
+
+  // Tạm dừng / tiếp tục khi app xuống nền hoặc quay lại mà giữ nguyên deadline expiresAt.
+  useEffect(() => {
+    controllerRef.current?.setActive(active);
+  }, [active]);
+
+  // Xóa ngay khung hình cũ mỗi khi đổi phiên (jobId / authJobStepId / sessionId).
+  const activeSessionKey = buildFaceAuthSessionKey(
+    viewState.jobId || jobId,
+    viewState.authJobStepId || authJobStepId,
+    viewState.sessionId ?? sessionId,
+  );
+  useEffect(() => {
+    setPreviewState((prev) =>
+      prev.sessionKey === activeSessionKey
+        ? prev
+        : createInitialCameraPreviewState(activeSessionKey),
+    );
+  }, [activeSessionKey]);
+
+  // 2. Poll preview camera vật lý từ server (single in-flight, abort khi đổi phiên hoặc rời màn hình).
+  const isLiveScanPhase: FaceAuthPhase[] = ['waiting_window', 'scanning', 'verifying'];
+  const shouldPollPreview =
+    active &&
+    Boolean(jobId) &&
+    isLiveScanPhase.includes(viewState.phase);
 
   useEffect(() => {
-    if (faceStep === 3 || faceStep === 4) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(laserAnim, {
-            toValue: 1,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(laserAnim, {
-            toValue: 0,
-            duration: 1500,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      laserAnim.setValue(0);
-    }
-  }, [faceStep, laserAnim]);
+    if (!shouldPollPreview || !jobId) return;
 
-  // Auto progression from scanning -> comparing -> success
-  useEffect(() => {
-    if (faceStep === 3) {
-      const interval = setInterval(() => {
-        setScanProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setFaceStep(4);
-            return 100;
-          }
-          return prev + 6;
-        });
-      }, 300);
-      return () => clearInterval(interval);
-    }
-    if (faceStep === 4) {
-      const timer = setTimeout(() => {
-        setFaceStep(5);
-      }, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [faceStep]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let freshnessTimer: ReturnType<typeof setInterval> | null = null;
+    let inFlight = false;
+    let abortCtrl: AbortController | null = null;
+    const requestSessionKey = activeSessionKey;
 
-  return (
-    <View style={[styles.root, { paddingTop: insets.top }]}>
-      {/* 1. Header Trạng thái Robot */}
-      <View style={styles.topBar}>
-        <View style={styles.topBarLeft}>
-          <Ionicons name="hardware-chip" size={16} color="#0284C7" />
-          <AppText style={styles.robotNameText}>MediRover #001</AppText>
-          <View style={styles.onlineBadge}>
-            <View style={styles.onlineDot} />
-            <AppText style={styles.onlineText}>Online</AppText>
-          </View>
-        </View>
-        <View style={styles.topBarRight}>
-          <Ionicons name="battery-charging" size={16} color="#10B981" />
-          <AppText style={styles.batteryText}>79%</AppText>
-          <AppText style={styles.headerTimeText}>21:28</AppText>
-        </View>
-      </View>
+    freshnessTimer = setInterval(() => {
+      if (cancelled) return;
+      setPreviewState((prev) => evaluateCameraPreviewFreshness(prev, getServerNowMs()));
+    }, CAMERA_FRESHNESS_CHECK_MS);
 
-      {/* 2. Banner Thông tin nhiệm vụ */}
-      <View style={styles.taskBanner}>
-        <View style={styles.taskBannerLeft}>
-          <AppText style={styles.taskIdText}>#TH02</AppText>
-          <View style={styles.priorityBadge}>
-            <AppText style={styles.priorityText}>Ưu tiên cao</AppText>
-          </View>
-          <AppText style={styles.routeSummaryText}>Nhà thuốc → P. Tim mạch</AppText>
-        </View>
-        <AppText style={styles.timeTag}>21:28</AppText>
-      </View>
+    const pollPreview = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      let nextDelay = CAMERA_PREVIEW_POLL_MS;
+      abortCtrl = new AbortController();
+      try {
+        const res = await robotMapService.fetchJobCameraPreview(jobId, abortCtrl.signal);
+        if (cancelled) return;
+        setPreviewState((prev) =>
+          applyCameraPreviewResponse(prev, res, getServerNowMs(), requestSessionKey),
+        );
+        if (
+          res.status === 404 ||
+          res.status === 401 ||
+          res.status === 403 ||
+          res.status === 0 ||
+          res.status >= 500
+        ) {
+          nextDelay = 2_500;
+        }
+      } finally {
+        abortCtrl = null;
+        inFlight = false;
+        if (!cancelled) {
+          timer = setTimeout(() => {
+            void pollPreview();
+          }, nextDelay);
+        }
+      }
+    };
 
-      {/* 3. Status Tags */}
-      <View style={styles.tagRow}>
-        <View style={styles.tagItem}>
-          <Ionicons
-            name={faceStep === 5 ? 'lock-open-outline' : 'lock-closed-outline'}
-            size={13}
-            color={faceStep === 5 ? '#10B981' : '#475569'}
-          />
-          <AppText style={[styles.tagText, faceStep === 5 && { color: '#059669' }]}>
-            {faceStep === 5 ? 'Thùng: Mở khóa' : 'Thùng: Đã khóa'}
+    void pollPreview();
+    return () => {
+      cancelled = true;
+      abortCtrl?.abort();
+      abortCtrl = null;
+      if (timer) clearTimeout(timer);
+      if (freshnessTimer) clearInterval(freshnessTimer);
+    };
+  }, [activeSessionKey, jobId, shouldPollPreview]);
+
+  if (!jobId || !authJobStepId) {
+    return (
+      <View style={styles.emptyRoot} testID="face-verify-no-job-screen">
+        <View style={styles.emptyCard}>
+          <Ionicons name="person-circle-outline" size={64} color={colors.heroSurface} />
+          <AppText style={styles.emptyTitle}>Chưa có phiên xác thực khuôn mặt</AppText>
+          <AppText style={styles.emptySubtitle}>
+            Màn hình này chỉ tự mở khi Robot đang thực thi bước xác thực khuôn mặt người nhận hàng còn hiệu lực từ máy chủ.
           </AppText>
         </View>
+      </View>
+    );
+  }
 
-        <View style={[styles.tagItem, styles.tagItemHighlight]}>
-          <Ionicons name="person-circle-outline" size={13} color="#0284C7" />
-          <AppText style={[styles.tagText, { color: '#0284C7' }]}>Xác minh khuôn mặt</AppText>
+  const isSender = viewState.purpose === 'DELIVERY_SENDER';
+  const legLabel = isSender
+    ? 'XÁC THỰC KHUÔN MẶT NGƯỜI GỬI'
+    : 'XÁC THỰC KHUÔN MẶT NGƯỜI NHẬN HÀNG';
+  const roleLabel = isSender ? 'NHÂN VIÊN GỬI HÀNG' : 'NGƯỜI NHẬN HÀNG';
+  const staffDisplay =
+    viewState.expectedPersonName ||
+    (viewState.expectedAccountId
+      ? `Nhân viên #${viewState.expectedAccountId.slice(0, 8)}`
+      : isSender
+        ? 'Nhân viên gửi được phân công'
+        : 'Nhân viên nhận được phân công');
+
+  if (viewState.phase === 'verified') {
+    return (
+      <View style={styles.successRoot} testID="face-verify-success-screen">
+        <View style={styles.successCard}>
+          <View style={styles.successIconCircle}>
+            <Ionicons name="checkmark-circle" size={88} color="#16A34A" />
+          </View>
+          <AppText style={styles.successTitle}>Đã xác thực khuôn mặt thành công!</AppText>
+          <AppText style={styles.successSubtitle}>
+            {roleLabel}: {staffDisplay}. Máy chủ sẽ cấp quyền cho bước tiếp theo và màn hình đang quay về bản đồ...
+          </AppText>
         </View>
-        <AppText style={styles.zoneText}>Zone A - Tầng 1</AppText>
+      </View>
+    );
+  }
+
+  const progression = resolveProgressionInfo(viewState);
+  const cameraBadgeText =
+    viewState.phase === 'expired'
+      ? 'Hết hạn'
+      : getCameraFeedLabel(previewState.feedStatus, viewState.isOffline);
+  const isLiveFeed =
+    !viewState.isOffline &&
+    viewState.phase !== 'expired' &&
+    previewState.feedStatus === 'live' &&
+    Boolean(previewState.dataUri);
+
+  const statusDotColor =
+    viewState.isOffline ||
+    viewState.phase === 'expired' ||
+    previewState.feedStatus === 'network_error'
+      ? '#EF4444'
+      : isLiveFeed
+        ? '#22C55E'
+        : '#F59E0B';
+
+  const placeholderTitle =
+    viewState.phase === 'expired'
+      ? 'Phiên quét khuôn mặt đã hết hạn'
+      : viewState.isOffline || previewState.feedStatus === 'network_error'
+        ? 'Mất kết nối mạng với máy chủ'
+        : previewState.feedStatus === 'stale'
+          ? 'Khung hình camera đang bị đứng'
+          : 'Đang kết nối camera robot';
+
+  const placeholderDesc =
+    viewState.phase === 'expired'
+      ? 'Hết thời gian chờ xác thực. Hệ thống đang giữ khoang hàng khóa và quay về màn hình bản đồ.'
+      : viewState.isOffline || previewState.feedStatus === 'network_error'
+        ? previewState.errorMessage ||
+          viewState.feedbackMessage ||
+          'Đang thử kết nối lại máy chủ backend và camera robot...'
+        : previewState.feedStatus === 'unavailable_endpoint'
+          ? 'Camera trên thân robot (Raspberry Pi · StaffFaceScanner) đang quét trực tiếp và gửi lên máy chủ. Máy chủ hiện chưa bật JPEG preview cho đơn giao hàng (HTTP 404).'
+          : previewState.feedStatus === 'stale'
+            ? previewState.errorMessage || 'Đang chờ khung hình mới từ camera trên thân robot...'
+            : viewState.feedbackMessage || 'Vui lòng nhìn vào camera trên thân robot';
+
+  const stages: Array<{ key: ProgressionStageKey; label: string; tone?: 'warning' | 'danger' | 'success' }> = [
+    { key: 'connecting', label: 'Đang kết nối' },
+    { key: 'scanning', label: 'Đang quét' },
+    { key: 'verifying', label: 'Đang xác thực' },
+    {
+      key: 'outcome',
+      label: progression.outcomeLabel,
+      tone:
+        progression.outcomeTone === 'warning'
+          ? 'warning'
+          : progression.outcomeTone === 'danger'
+            ? 'danger'
+            : progression.outcomeTone === 'success'
+              ? 'success'
+              : undefined,
+    },
+  ];
+
+  return (
+    <View style={styles.root} testID="face-verify-wait-screen">
+      {/* CỘT TRÁI: KHUNG CAMERA ROBOT LỚN */}
+      <View style={styles.cameraPane}>
+        <View style={styles.cameraFrame}>
+          {isLiveFeed && previewState.dataUri ? (
+            <Image
+              source={{ uri: previewState.dataUri }}
+              style={styles.cameraImage}
+              resizeMode="contain"
+            />
+          ) : (
+            <View style={styles.placeholderWrap}>
+              {viewState.isOffline ||
+              previewState.feedStatus === 'network_error' ||
+              viewState.phase === 'expired' ? (
+                <Ionicons name="cloud-offline-outline" size={76} color="#F87171" />
+              ) : (
+                <ActivityIndicator size="large" color="#38BDF8" />
+              )}
+              <AppText style={styles.placeholderTitle}>{placeholderTitle}</AppText>
+              <AppText style={styles.placeholderDesc}>{placeholderDesc}</AppText>
+            </View>
+          )}
+
+          {/* Khung hướng dẫn đặt khuôn mặt ở giữa */}
+          <View style={styles.reticleOverlay} pointerEvents="none">
+            <View style={styles.reticleBox}>
+              <View style={[styles.corner, styles.cornerTL]} />
+              <View style={[styles.corner, styles.cornerTR]} />
+              <View style={[styles.corner, styles.cornerBL]} />
+              <View style={[styles.corner, styles.cornerBR]} />
+            </View>
+            <View style={styles.centerInstructionBadge}>
+              <AppText style={styles.centerInstructionText}>
+                Vui lòng nhìn vào camera trên thân robot
+              </AppText>
+            </View>
+          </View>
+
+          {/* HUD trạng thái phía trên */}
+          <View style={styles.topHudBar} pointerEvents="none">
+            <View style={styles.livePill} testID="face-camera-feed-pill">
+              <View style={[styles.liveDot, { backgroundColor: statusDotColor }]} />
+              <AppText style={styles.livePillText}>{cameraBadgeText}</AppText>
+            </View>
+
+            <View style={styles.hudRightGroup}>
+              {viewState.elapsedSec !== null ? (
+                <View style={styles.timePill}>
+                  <AppText style={styles.timePillText}>
+                    Đã quét {formatClockSec(viewState.elapsedSec)}
+                  </AppText>
+                </View>
+              ) : null}
+              {viewState.remainingSec !== null ? (
+                <View style={styles.timePill} testID="face-remaining-timer">
+                  <AppText style={styles.timePillText}>
+                    Còn {formatClockSec(viewState.remainingSec)}
+                  </AppText>
+                </View>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Thanh thông báo lỗi / trạng thái thực tế bên dưới khung camera */}
+          {viewState.feedbackMessage ? (
+            <View style={styles.bottomFeedbackBanner} pointerEvents="none">
+              <Ionicons
+                name={
+                  viewState.isOffline || viewState.phase === 'expired'
+                    ? 'warning-outline'
+                    : 'information-circle-outline'
+                }
+                size={18}
+                color="#FDE68A"
+              />
+              <AppText style={styles.bottomFeedbackText}>{viewState.feedbackMessage}</AppText>
+            </View>
+          ) : null}
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* 4. Stepper */}
-        <LogisticsStepper currentStep={faceStep === 5 ? 5 : 4} />
-
-        {/* 5. GIAI ĐOẠN 1 (Ảnh 5): ROBOT ĐÃ ĐẾN P. TIM MẠCH */}
-        {faceStep === 1 && (
-          <View style={styles.stateContainer}>
-            <View style={styles.heroIconBoxBlue}>
-              <Ionicons name="business" size={42} color="#0066CC" />
-            </View>
-            <View style={styles.statusPillTeal}>
-              <View style={[styles.dot, { backgroundColor: '#0F766E' }]} />
-              <AppText style={[styles.statusPillText, { color: '#0F766E' }]}>
-                ĐÃ ĐẾN NƠI GIAO
-              </AppText>
-            </View>
-            <AppText style={styles.heroTitle}>Robot đã đến P. Tim mạch</AppText>
-            <AppText style={styles.heroSubtitle}>Đang chờ người nhận · Thùng đã khóa</AppText>
-
-            {/* Card người nhận & thùng */}
-            <View style={styles.infoCard}>
-              <View style={styles.infoCardRow}>
-                <View style={styles.infoCell}>
-                  <AppText style={styles.cellLabel}>NGƯỜI NHẬN</AppText>
-                  <AppText style={styles.cellValue}>BS. Trần Thị Lan</AppText>
-                </View>
-                <View style={styles.infoCell}>
-                  <AppText style={styles.cellLabel}>THÙNG</AppText>
-                  <AppText style={[styles.cellValue, { color: '#D97706' }]}>
-                    🔒 Đang khóa
-                  </AppText>
-                </View>
-              </View>
-
-              <View style={styles.authMethodPill}>
-                <Ionicons name="scan-outline" size={16} color="#0066CC" />
-                <View>
-                  <AppText style={styles.authMethodLabel}>PHƯƠNG THỨC XÁC MINH BẮT BUỘC</AppText>
-                  <AppText style={styles.authMethodValue}>Quét nhận diện khuôn mặt</AppText>
-                </View>
-              </View>
-            </View>
-
-            {/* Warning Box */}
-            <View style={styles.warningBox}>
-              <Ionicons name="warning-outline" size={18} color="#D97706" />
-              <AppText style={styles.warningText}>
-                Thùng chỉ được mở sau khi người nhận đã được xác minh.
-              </AppText>
-            </View>
-
-            <Pressable
-              onPress={() => setFaceStep(2)}
-              style={styles.actionBtnOrange}
-            >
-              <AppText style={styles.actionBtnText}>Bắt đầu quét khuôn mặt</AppText>
-              <Ionicons name="arrow-forward" size={18} color="#FFFFFF" />
-            </Pressable>
+      {/* CỘT PHẢI: TRẠNG THÁI TIẾN TRÌNH & THÔNG TIN NGƯỜI NHẬN */}
+      <View style={styles.guidePane}>
+        <View style={styles.guideCard}>
+          <View style={styles.purposePill}>
+            <Ionicons name="person-circle-outline" size={16} color="#FFFFFF" />
+            <AppText style={styles.purposePillText}>{legLabel}</AppText>
           </View>
-        )}
 
-        {/* 6. GIAI ĐOẠN 2 (Ảnh 4): CHỜ XÁC MINH KHUÔN MẶT - CAMERA MỞ */}
-        {faceStep === 2 && (
-          <View style={styles.stateContainer}>
-            <View style={styles.statusPillOrange}>
-              <View style={[styles.dot, { backgroundColor: '#D97706' }]} />
-              <AppText style={[styles.statusPillText, { color: '#B45309' }]}>
-                CHỜ XÁC MINH KHUÔN MẶT
-              </AppText>
-            </View>
-            <AppText style={styles.heroTitle}>Xác minh khuôn mặt</AppText>
+          <AppText style={styles.guideHeading}>
+            Vui lòng nhìn vào camera trên thân robot
+          </AppText>
 
-            {/* Warning Top Box */}
-            <View style={styles.instructionBanner}>
-              <Ionicons name="person" size={16} color="#D97706" />
-              <AppText style={styles.instructionBannerText}>
-                Nhìn thẳng vào camera · Không đeo khẩu trang · Đứng cách 50–80 cm
-              </AppText>
-            </View>
-
-            {/* Khung Camera Quét Thật */}
-            <View style={styles.cameraFrameWrapper}>
-              {permission?.granted ? (
-                <CameraView facing="front" style={styles.cameraView} />
-              ) : (
-                <View style={styles.cameraPlaceholder}>
-                  <Ionicons name="person" size={80} color="#CBD5E1" />
-                  <Pressable
-                    onPress={requestPermission}
-                    style={styles.grantCameraBtn}
-                  >
-                    <Ionicons name="camera" size={16} color="#FFFFFF" />
-                    <AppText style={styles.grantCameraText}>Bấm cấp quyền Camera</AppText>
-                  </Pressable>
-                </View>
-              )}
-
-              {/* 4 Corner Brackets */}
-              <View style={[styles.cornerBracket, styles.bracketTL]} />
-              <View style={[styles.cornerBracket, styles.bracketTR]} />
-              <View style={[styles.cornerBracket, styles.bracketBL]} />
-              <View style={[styles.cornerBracket, styles.bracketBR]} />
-
-              {/* Center Silhouette Overlay */}
-              <View style={styles.silhouetteOverlay} pointerEvents="none">
-                <Ionicons name="person-outline" size={110} color="rgba(245, 158, 11, 0.35)" />
-              </View>
-            </View>
-
-            {/* Hướng dẫn chi tiết */}
-            <View style={styles.guideCard}>
-              <AppText style={styles.guideHeader}>HƯỚNG DẪN</AppText>
-              <AppText style={styles.guideItem}>• Đứng cách camera 50–80 cm</AppText>
-              <AppText style={styles.guideItem}>• Không đeo khẩu trang, kính râm</AppText>
-              <AppText style={styles.guideItem}>• Hướng mặt thẳng vào camera</AppText>
-              <AppText style={styles.guideItem}>• Đảm bảo đủ ánh sáng</AppText>
-            </View>
-
-            {/* 2 Cells */}
-            <View style={styles.grid2x2}>
-              <View style={styles.cell2x2}>
-                <AppText style={styles.cellLabel}>SỐ LẦN THỬ CÒN LẠI</AppText>
-                <AppText style={styles.cellValue}>3/3</AppText>
-              </View>
-              <View style={styles.cell2x2}>
-                <AppText style={styles.cellLabel}>THÙNG</AppText>
-                <AppText style={[styles.cellValue, { color: '#D97706' }]}>🔒 Đang khóa</AppText>
-              </View>
-            </View>
-
-            <Pressable
-              onPress={() => {
-                setScanProgress(30);
-                setFaceStep(3);
-              }}
-              style={styles.actionBtnOrange}
-            >
-              <AppText style={styles.actionBtnText}>Bắt đầu xác minh →</AppText>
-            </Pressable>
-          </View>
-        )}
-
-        {/* 7. GIAI ĐOẠN 3 (Ảnh 3): GIỮ NGUYÊN — ĐANG QUÉT KHUÔN MẶT */}
-        {faceStep === 3 && (
-          <View style={styles.stateContainer}>
-            <View style={styles.statusPillOrange}>
-              <View style={[styles.dot, { backgroundColor: '#D97706' }]} />
-              <AppText style={[styles.statusPillText, { color: '#B45309' }]}>
-                ĐANG PHÁT HIỆN KHUÔN MẶT
-              </AppText>
-            </View>
-            <AppText style={styles.heroTitle}>Giữ nguyên — Đang quét</AppText>
-
-            {/* Khung Camera với Laser Quét Chuyển Động */}
-            <View style={styles.cameraFrameWrapper}>
-              {permission?.granted ? (
-                <CameraView facing="front" style={styles.cameraView} />
-              ) : (
-                <View style={styles.cameraPlaceholder}>
-                  <Ionicons name="person" size={80} color="#FDE68A" />
-                </View>
-              )}
-
-              {/* 4 Corner Brackets */}
-              <View style={[styles.cornerBracket, styles.bracketTL]} />
-              <View style={[styles.cornerBracket, styles.bracketTR]} />
-              <View style={[styles.cornerBracket, styles.bracketBL]} />
-              <View style={[styles.cornerBracket, styles.bracketBR]} />
-
-              {/* Animated Laser Beam */}
-              <Animated.View
-                style={[
-                  styles.laserBeam,
-                  {
-                    transform: [
-                      {
-                        translateY: laserAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [10, 210],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              />
-
-              {/* Face Guide Silhouette */}
-              <View style={styles.silhouetteOverlay} pointerEvents="none">
-                <Ionicons name="person" size={100} color="rgba(245, 158, 11, 0.2)" />
-              </View>
-            </View>
-
-            {/* Thanh tiến độ quét */}
-            <View style={styles.scanProgressWrap}>
-              <View style={styles.scanLabelRow}>
-                <AppText style={styles.scanProgressLabel}>ĐANG PHÁT HIỆN KHUÔN MẶT</AppText>
-                <AppText style={styles.scanPercentText}>{scanProgress}%</AppText>
-              </View>
-              <View style={styles.progressBarTrack}>
-                <View style={[styles.progressBarFill, { width: `${scanProgress}%` }]} />
-              </View>
-            </View>
-
-            <Pressable
-              onPress={() => setFaceStep(4)}
-              style={styles.actionBtnOrange}
-            >
-              <AppText style={styles.actionBtnText}>Xác minh người nhận →</AppText>
-            </Pressable>
-          </View>
-        )}
-
-        {/* 8. GIAI ĐOẠN 4 (Ảnh 2): ĐANG SO SÁNH KHUÔN MẶT... */}
-        {faceStep === 4 && (
-          <View style={styles.stateContainer}>
-            <View style={styles.statusPillOrange}>
-              <View style={[styles.dot, { backgroundColor: '#D97706' }]} />
-              <AppText style={[styles.statusPillText, { color: '#B45309' }]}>
-                ĐANG XÁC MINH NGƯỜI NHẬN
-              </AppText>
-            </View>
-            <AppText style={styles.heroTitle}>Đang so sánh khuôn mặt...</AppText>
-
-            {/* Khung Camera Quét Khớp */}
-            <View style={styles.cameraFrameWrapper}>
-              {permission?.granted ? (
-                <CameraView facing="front" style={styles.cameraView} />
-              ) : (
-                <View style={styles.cameraPlaceholder}>
-                  <Ionicons name="person" size={80} color="#FDE68A" />
-                </View>
-              )}
-
-              {/* 4 Corner Brackets */}
-              <View style={[styles.cornerBracket, styles.bracketTL]} />
-              <View style={[styles.cornerBracket, styles.bracketTR]} />
-              <View style={[styles.cornerBracket, styles.bracketBL]} />
-              <View style={[styles.cornerBracket, styles.bracketBR]} />
-
-              {/* Orange Horizontal Scan line stationary */}
-              <View style={styles.stationaryScanLine} />
-            </View>
-
-            {/* 3 Animated Dots */}
-            <View style={styles.dotsRow}>
-              <View style={[styles.animDot, { backgroundColor: '#D97706' }]} />
-              <View style={[styles.animDot, { backgroundColor: '#D97706', opacity: 0.8 }]} />
-              <View style={[styles.animDot, { backgroundColor: '#D97706', opacity: 0.6 }]} />
-            </View>
-
-            <AppText style={styles.dbComparingText}>Đang so sánh với cơ sở dữ liệu...</AppText>
-          </View>
-        )}
-
-        {/* 9. GIAI ĐOẠN 5 (Ảnh 1): XÁC MINH THÀNH CÔNG! */}
-        {faceStep === 5 && (
-          <View style={styles.stateContainer}>
-            <View style={styles.statusPillGreen}>
-              <View style={[styles.dot, { backgroundColor: '#10B981' }]} />
-              <AppText style={[styles.statusPillText, { color: '#047857' }]}>
-                XÁC MINH KHUÔN MẶT THÀNH CÔNG
-              </AppText>
-            </View>
-            <AppText style={styles.heroTitle}>Xác minh thành công!</AppText>
-
-            {/* Khung Camera Xanh Lá với Dấu Tích [✓] */}
-            <View style={[styles.cameraFrameWrapper, styles.cameraFrameSuccess]}>
-              <View style={styles.successCheckCircle}>
-                <Ionicons name="checkmark" size={54} color="#FFFFFF" />
-              </View>
-
-              {/* 4 Green Corner Brackets */}
-              <View style={[styles.cornerBracket, styles.bracketTL, styles.bracketGreen]} />
-              <View style={[styles.cornerBracket, styles.bracketTR, styles.bracketGreen]} />
-              <View style={[styles.cornerBracket, styles.bracketBL, styles.bracketGreen]} />
-              <View style={[styles.cornerBracket, styles.bracketBR, styles.bracketGreen]} />
-            </View>
-
-            {/* Card Kết quả */}
-            <View style={styles.resultCard}>
-              <View style={styles.infoCardRow}>
-                <View style={styles.infoCell}>
-                  <AppText style={styles.cellLabel}>NGƯỜI NHẬN</AppText>
-                  <AppText style={styles.cellValue}>BS. Nguyễn Văn An</AppText>
-                </View>
-                <View style={styles.infoCell}>
-                  <AppText style={styles.cellLabel}>KẾT QUẢ</AppText>
-                  <AppText style={[styles.cellValue, { color: '#10B981' }]}>
-                    ✓ Khuôn mặt khớp
-                  </AppText>
-                </View>
-              </View>
-            </View>
-
-            {/* Unlock Button */}
-            <Pressable
-              onPress={() => setFaceStep(1)}
-              style={styles.actionBtnGreen}
-            >
-              <Ionicons name="lock-open-outline" size={20} color="#FFFFFF" />
-              <AppText style={styles.actionBtnText}>Mở khóa thùng và hoàn tất</AppText>
-            </Pressable>
-          </View>
-        )}
-
-        {/* 10. THANH ĐIỀU KHIỂN XEM TỪNG BƯỚC */}
-        <View style={styles.controlBox}>
-          <AppText style={styles.controlTitle}>CHỌN XEM NHANH 5 TRẠNG THÁI XÁC MINH:</AppText>
-          <View style={styles.stepTabsRow}>
-            {([1, 2, 3, 4, 5] as FaceStep[]).map((step) => {
-              const labels = [
-                '1. Đến nơi',
-                '2. Bật camera',
-                '3. Đang quét',
-                '4. So sánh',
-                '5. Thành công',
-              ];
-              const isSelected = faceStep === step;
+          {/* Chuỗi trạng thái trực quan */}
+          <View style={styles.stageRow} testID="face-progression-strip">
+            {stages.map((st, idx) => {
+              const isActive = progression.activeStage === st.key;
+              const pillStyle =
+                isActive && st.tone === 'danger'
+                  ? styles.stagePillDanger
+                  : isActive && st.tone === 'warning'
+                    ? styles.stagePillWarning
+                    : isActive
+                      ? styles.stagePillActive
+                      : styles.stagePillIdle;
+              const textStyle = isActive ? styles.stageTextActive : styles.stageTextIdle;
               return (
-                <Pressable
-                  key={step}
-                  onPress={() => setFaceStep(step)}
-                  style={[styles.stepTab, isSelected && styles.stepTabActive]}
-                >
-                  <AppText style={[styles.stepTabLabel, isSelected && styles.stepTabLabelActive]}>
-                    {labels[step - 1]}
-                  </AppText>
-                </Pressable>
+                <View key={st.key} style={styles.stageItemWrap}>
+                  <View style={[styles.stagePill, pillStyle]}>
+                    <AppText style={textStyle} numberOfLines={1}>
+                      {st.label}
+                    </AppText>
+                  </View>
+                  {idx < stages.length - 1 ? (
+                    <AppText style={styles.stageArrow}>→</AppText>
+                  ) : null}
+                </View>
               );
             })}
           </View>
+
+          {/* Thẻ thông tin người nhận & trạng thái khóa ngăn */}
+          <View style={styles.partyBox}>
+            <View style={styles.partyRow}>
+              <View style={styles.partyCell}>
+                <AppText style={styles.partyLabel}>{roleLabel}</AppText>
+                <AppText style={styles.partyValue} numberOfLines={2}>
+                  {staffDisplay}
+                </AppText>
+              </View>
+              <View style={styles.partyCell}>
+                <AppText style={styles.partyLabel}>KHOANG HÀNG</AppText>
+                <AppText style={[styles.partyValue, { color: '#FDE68A' }]}>
+                  Đang khóa
+                </AppText>
+              </View>
+            </View>
+            {(viewState.requestCode ||
+              viewState.pickupLocationLabel ||
+              viewState.deliveryLocationLabel) ? (
+              <AppText variant="caption" style={styles.routeMetaText}>
+                {viewState.requestCode ? `Đơn ${viewState.requestCode}` : 'Đơn giao nhận'}
+                {viewState.pickupLocationLabel || viewState.deliveryLocationLabel
+                  ? ` · ${viewState.pickupLocationLabel || 'Điểm gửi'} → ${viewState.deliveryLocationLabel || 'Điểm nhận'}`
+                  : ''}
+              </AppText>
+            ) : null}
+          </View>
+
+          <View style={styles.stepsList}>
+            <View style={styles.stepItem}>
+              <View style={styles.stepNum}>
+                <AppText style={styles.stepNumText}>1</AppText>
+              </View>
+              <AppText style={styles.stepBody}>
+                Đứng thẳng cách camera trên thân robot 50–80 cm, đủ ánh sáng
+              </AppText>
+            </View>
+            <View style={styles.stepItem}>
+              <View style={styles.stepNum}>
+                <AppText style={styles.stepNumText}>2</AppText>
+              </View>
+              <AppText style={styles.stepBody}>
+                Không đeo khẩu trang hoặc kính râm, chỉ một người trong khung ngắm
+              </AppText>
+            </View>
+            <View style={styles.stepItem}>
+              <View style={styles.stepNum}>
+                <AppText style={styles.stepNumText}>3</AppText>
+              </View>
+              <AppText style={styles.stepBody}>
+                {progression.headlineStatus} · Khi máy chủ xác nhận khớp, ngăn hàng mới mở khóa
+              </AppText>
+            </View>
+          </View>
+
+          <View style={styles.metaFooter}>
+            <AppText variant="caption" style={styles.metaText}>
+              Job {viewState.jobId.slice(0, 8)} · Step {viewState.authJobStepId.slice(0, 8)}
+              {viewState.sessionId ? ` · Phiên ${viewState.sessionId.slice(0, 8)}` : ' · Chờ phiên'}
+            </AppText>
+          </View>
         </View>
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
+const CORNER_SIZE = 30;
+const CORNER_BORDER = 4;
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
-  },
-  topBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    backgroundColor: colors.background,
+    gap: spacing.md,
   },
-  topBarLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  cameraPane: {
+    flex: 2.0,
+    height: '100%',
   },
-  robotNameText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  onlineBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  onlineDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#10B981',
-  },
-  onlineText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  topBarRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  batteryText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#334155',
-  },
-  headerTimeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  taskBanner: {
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  taskBannerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  cameraFrame: {
     flex: 1,
-  },
-  taskIdText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  priorityBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  priorityText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  routeSummaryText: {
-    fontSize: 11,
-    color: '#475569',
-    fontWeight: '500',
-  },
-  timeTag: {
-    fontSize: 11,
-    color: '#64748B',
-    fontWeight: '600',
-  },
-  tagRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
-  },
-  tagItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#F1F5F9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  tagItemHighlight: {
-    backgroundColor: '#E0F2FE',
-  },
-  tagText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  zoneText: {
-    fontSize: 10,
-    color: '#94A3B8',
-    marginLeft: 'auto',
-    fontWeight: '500',
-  },
-  scrollContent: {
-    padding: 14,
-    gap: 12,
-    paddingBottom: 40,
-  },
-  stateContainer: {
-    alignItems: 'center',
-    marginVertical: 4,
-    gap: 8,
-  },
-  heroIconBoxBlue: {
-    width: 76,
-    height: 76,
-    borderRadius: 22,
-    backgroundColor: '#EFF6FF',
-    alignItems: 'center',
+    backgroundColor: colors.darkDeepBg,
+    borderRadius: radii.xl,
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#0E5B7E',
+    position: 'relative',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    marginVertical: 4,
-  },
-  statusPillTeal: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#CCFBF1',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
   },
-  statusPillOrange: {
-    flexDirection: 'row',
+  cameraImage: {
+    width: '100%',
+    height: '100%',
+  },
+  placeholderWrap: {
+    paddingHorizontal: spacing.xxl,
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
+    gap: spacing.md,
+    paddingBottom: 56,
   },
-  statusPillGreen: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#DCFCE7',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-  },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  heroTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0F172A',
-    letterSpacing: -0.5,
+  placeholderTitle: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
     textAlign: 'center',
   },
-  heroSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
+  placeholderDesc: {
+    color: '#CBD5E1',
+    fontSize: 13.5,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 460,
   },
-  // Info Card
-  infoCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    width: '100%',
-    gap: 12,
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  infoCardRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  infoCell: {
-    flex: 1,
-    backgroundColor: '#F8FAFC',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  cellLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  cellValue: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginTop: 2,
-  },
-  authMethodPill: {
-    flexDirection: 'row',
+  reticleOverlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
     alignItems: 'center',
-    gap: 10,
-    backgroundColor: '#F0F7FF',
-    borderRadius: 12,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: '#D0E4FA',
+    justifyContent: 'center',
+    gap: spacing.md,
   },
-  authMethodLabel: {
-    fontSize: 8,
-    fontWeight: '700',
-    color: '#0066CC',
-    letterSpacing: 0.5,
-  },
-  authMethodValue: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#00478F',
-  },
-  warningBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFFBEB',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    padding: 12,
-    width: '100%',
-  },
-  warningText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#92400E',
-    lineHeight: 16,
-    fontWeight: '500',
-  },
-  instructionBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: '#FFFBEB',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    padding: 10,
-    width: '100%',
-  },
-  instructionBannerText: {
-    flex: 1,
-    fontSize: 11,
-    color: '#92400E',
-    fontWeight: '600',
-  },
-  // Camera Frame
-  cameraFrameWrapper: {
+  reticleBox: {
     width: 230,
     height: 270,
-    borderRadius: 24,
-    backgroundColor: '#FFFBEB',
-    borderWidth: 2,
-    borderColor: '#F59E0B',
     position: 'relative',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 6,
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
+    borderRadius: 115,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(34, 211, 238, 0.45)',
   },
-  cameraFrameSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#10B981',
-    shadowColor: '#10B981',
+  corner: {
+    position: 'absolute',
+    width: CORNER_SIZE,
+    height: CORNER_SIZE,
+    borderColor: '#22D3EE',
   },
-  cameraView: {
-    ...StyleSheet.absoluteFill,
+  cornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: CORNER_BORDER,
+    borderLeftWidth: CORNER_BORDER,
+    borderTopLeftRadius: 14,
   },
-  cameraPlaceholder: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFDF5',
-    gap: 12,
+  cornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: CORNER_BORDER,
+    borderRightWidth: CORNER_BORDER,
+    borderTopRightRadius: 14,
   },
-  grantCameraBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F59E0B',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+  cornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: CORNER_BORDER,
+    borderLeftWidth: CORNER_BORDER,
+    borderBottomLeftRadius: 14,
   },
-  grantCameraText: {
-    color: '#FFFFFF',
-    fontSize: 11,
+  cornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: CORNER_BORDER,
+    borderRightWidth: CORNER_BORDER,
+    borderBottomRightRadius: 14,
+  },
+  centerInstructionBadge: {
+    backgroundColor: 'rgba(10, 41, 59, 0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.45)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+  },
+  centerInstructionText: {
+    color: '#E0F2FE',
+    fontSize: 13,
     fontWeight: '700',
+    textAlign: 'center',
   },
-  cornerBracket: {
+  topHudBar: {
     position: 'absolute',
-    width: 22,
-    height: 22,
-    borderColor: '#F59E0B',
-  },
-  bracketGreen: {
-    borderColor: '#10B981',
-  },
-  bracketTL: {
-    top: 6,
-    left: 6,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-    borderTopLeftRadius: 12,
-  },
-  bracketTR: {
-    top: 6,
-    right: 6,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-    borderTopRightRadius: 12,
-  },
-  bracketBL: {
-    bottom: 6,
-    left: 6,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-    borderBottomLeftRadius: 12,
-  },
-  bracketBR: {
-    bottom: 6,
-    right: 6,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-    borderBottomRightRadius: 12,
-  },
-  silhouetteOverlay: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  laserBeam: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    height: 3,
-    backgroundColor: '#F59E0B',
-    borderRadius: 2,
-    shadowColor: '#F59E0B',
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  stationaryScanLine: {
-    position: 'absolute',
-    left: 10,
-    right: 10,
-    height: 3,
-    backgroundColor: '#F59E0B',
-    borderRadius: 2,
-    shadowColor: '#F59E0B',
-    shadowOpacity: 0.8,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  successCheckCircle: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#10B981',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 6,
-  },
-  // Guide Card
-  guideCard: {
-    backgroundColor: '#FFFBEB',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
-    padding: 12,
-    width: '100%',
-    gap: 4,
-  },
-  guideHeader: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#B45309',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  guideItem: {
-    fontSize: 11,
-    color: '#92400E',
-    fontWeight: '500',
-  },
-  grid2x2: {
-    flexDirection: 'row',
-    gap: 10,
-    width: '100%',
-  },
-  cell2x2: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  scanProgressWrap: {
-    width: '100%',
-    gap: 6,
-    marginVertical: 4,
-  },
-  scanLabelRow: {
+    top: 12,
+    left: 12,
+    right: 12,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    gap: spacing.sm,
   },
-  scanProgressLabel: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#64748B',
-    letterSpacing: 0.5,
+  hudRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
-  scanPercentText: {
+  livePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(10, 41, 59, 0.92)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.35)',
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  livePillText: {
+    color: '#F8FAFC',
     fontSize: 12,
     fontWeight: '800',
-    color: '#D97706',
+    letterSpacing: 0.3,
   },
-  progressBarTrack: {
-    height: 8,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#F59E0B',
-    borderRadius: 4,
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginVertical: 8,
-  },
-  animDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  dbComparingText: {
-    fontSize: 12,
-    color: '#64748B',
-    fontWeight: '500',
-  },
-  resultCard: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 18,
-    padding: 16,
+  timePill: {
+    backgroundColor: 'rgba(10, 41, 59, 0.92)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
-    width: '100%',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
+    borderColor: 'rgba(56, 189, 248, 0.35)',
   },
-  // Buttons
-  actionBtnOrange: {
-    backgroundColor: '#F59E0B',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+  timePillText: {
+    color: '#E0F2FE',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  bottomFeedbackBanner: {
+    position: 'absolute',
+    bottom: 14,
+    left: 14,
+    right: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 8,
-    width: '100%',
-    shadowColor: '#F59E0B',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    backgroundColor: 'rgba(11, 56, 81, 0.94)',
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.45)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: radii.md,
   },
-  actionBtnGreen: {
-    backgroundColor: '#10B981',
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+  bottomFeedbackText: {
+    flex: 1,
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  guidePane: {
+    flex: 1.05,
+    height: '100%',
+  },
+  guideCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.lg,
+    gap: spacing.sm + 2,
+  },
+  purposePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    width: '100%',
-    shadowColor: '#10B981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
+    alignSelf: 'flex-start',
+    gap: 6,
+    backgroundColor: colors.heroSurface,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
   },
-  actionBtnText: {
+  purposePillText: {
+    color: colors.textInverse,
+    fontSize: 11.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  guideHeading: {
+    color: colors.textPrimary,
+    fontSize: 17.5,
+    fontWeight: '800',
+    lineHeight: 23,
+  },
+  stageRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stageItemWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  stagePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+  },
+  stagePillIdle: {
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
+  },
+  stagePillActive: {
+    backgroundColor: colors.heroSurface,
+    borderColor: colors.heroSurface,
+  },
+  stagePillWarning: {
+    backgroundColor: '#D97706',
+    borderColor: '#D97706',
+  },
+  stagePillDanger: {
+    backgroundColor: colors.danger,
+    borderColor: colors.danger,
+  },
+  stageTextIdle: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  stageTextActive: {
     color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  stageArrow: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  partyBox: {
+    backgroundColor: colors.heroBlockBg,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    gap: spacing.xs,
+  },
+  partyRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  partyCell: {
+    flex: 1,
+    backgroundColor: colors.heroNestedBg,
+    borderRadius: radii.md,
+    padding: spacing.sm + 2,
+    gap: 2,
+  },
+  partyLabel: {
+    color: '#BAE6FD',
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  partyValue: {
+    color: colors.textInverse,
     fontSize: 14,
     fontWeight: '800',
   },
-  // Control Box
-  controlBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    gap: 8,
-    marginTop: 8,
-  },
-  controlTitle: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#64748B',
-    letterSpacing: 0.5,
-  },
-  stepTabsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 4,
-  },
-  stepTab: {
-    flex: 1,
-    paddingVertical: 6,
-    paddingHorizontal: 2,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  stepTabActive: {
-    backgroundColor: '#F59E0B',
-  },
-  stepTabLabel: {
-    fontSize: 9,
+  routeMetaText: {
+    color: '#E0F2FE',
     fontWeight: '600',
-    color: '#475569',
+    marginTop: 2,
+  },
+  stepsList: {
+    gap: spacing.xs + 2,
+  },
+  stepItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surfaceMuted,
+    padding: spacing.sm + 2,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderMuted,
+  },
+  stepNum: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.heroSurface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepNumText: {
+    color: colors.textInverse,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepBody: {
+    flex: 1,
+    color: colors.textPrimary,
+    fontSize: 12.5,
+    fontWeight: '600',
+    lineHeight: 17.5,
+  },
+  metaFooter: {
+    marginTop: 'auto',
+    paddingTop: spacing.sm,
+    paddingRight: 72,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderMuted,
+  },
+  metaText: {
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  successRoot: {
+    flex: 1,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  successCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    borderWidth: 2,
+    borderColor: '#86EFAC',
+    paddingVertical: spacing.xxl,
+    paddingHorizontal: spacing.xxl,
+    alignItems: 'center',
+    gap: spacing.md,
+    maxWidth: 500,
+    width: '100%',
+    shadowColor: '#16A34A',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  successIconCircle: {
+    width: 112,
+    height: 112,
+    borderRadius: 56,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successTitle: {
+    color: '#15803D',
+    fontSize: 24,
+    fontWeight: '800',
     textAlign: 'center',
   },
-  stepTabLabelActive: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+  successSubtitle: {
+    color: colors.textSecondary,
+    fontSize: 15,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  emptyRoot: {
+    flex: 1,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  emptyCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.xl,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.xxl,
+    alignItems: 'center',
+    gap: spacing.md,
+    maxWidth: 460,
+    width: '100%',
+  },
+  emptyTitle: {
+    color: colors.textPrimary,
+    fontSize: 19,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  emptySubtitle: {
+    color: colors.textSecondary,
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
