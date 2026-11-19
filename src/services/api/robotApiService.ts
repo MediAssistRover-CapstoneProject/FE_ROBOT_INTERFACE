@@ -29,8 +29,15 @@ import {
   HospitalInformationResponse,
   CameraVerifyRequest,
   StaffQrScanWindow,
+  StaffFaceScanWindow,
+  FaceVerifyRequest,
+  FaceVerifyResponse,
   DeviceMediaSessionEvent,
 } from './types';
+import { isValidUuid, normalizeFaceJpegBase64 } from './faceValidation';
+import { getServerNowMs } from './serverClock';
+
+export { isValidUuid, normalizeFaceJpegBase64 };
 
 export function parseSseMediaEventsChunk(buffer: string): {
   events: DeviceMediaSessionEvent[];
@@ -75,6 +82,8 @@ function roundCoordMeters(value: number): number {
 }
 
 class RobotApiService {
+  private faceVerifyInFlight = new Set<string>();
+
   /**
    * 1. Ping test to check server reachability
    */
@@ -710,6 +719,128 @@ class RobotApiService {
       };
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * 14. Kiểm tra cửa sổ xác thực khuôn mặt đang mở trên BE:
+   * GET /api/v1/pi/jobs/{jobId}/face-auth (200 Window hoặc 204 No Content).
+   */
+  public async getStaffFaceScanWindow(
+    jobId: string,
+    options?: { throwOnError?: boolean },
+  ): Promise<StaffFaceScanWindow | null> {
+    if (!isValidUuid(jobId)) {
+      return null;
+    }
+    try {
+      const raw = await apiClient.request<
+        Partial<StaffFaceScanWindow> & { data?: Partial<StaffFaceScanWindow> }
+      >(`/api/v1/pi/jobs/${encodeURIComponent(jobId)}/face-auth`);
+      const w = raw?.data ?? raw;
+      if (
+        !w ||
+        !isValidUuid(w.jobId) ||
+        !isValidUuid(w.authJobStepId) ||
+        !isValidUuid(w.sessionId) ||
+        typeof w.expiresAt !== 'string'
+      ) {
+        return null;
+      }
+      if (w.jobId.toLowerCase() !== jobId.toLowerCase()) {
+        return null;
+      }
+      const expiresMs = Date.parse(w.expiresAt);
+      if (!Number.isFinite(expiresMs) || expiresMs <= getServerNowMs()) {
+        return null;
+      }
+      const startedAt =
+        typeof w.startedAt === 'string' && Number.isFinite(Date.parse(w.startedAt))
+          ? w.startedAt
+          : undefined;
+      return startedAt
+        ? {
+            jobId: w.jobId,
+            authJobStepId: w.authJobStepId,
+            sessionId: w.sessionId,
+            expiresAt: w.expiresAt,
+            startedAt,
+          }
+        : {
+            jobId: w.jobId,
+            authJobStepId: w.authJobStepId,
+            sessionId: w.sessionId,
+            expiresAt: w.expiresAt,
+          };
+    } catch (err) {
+      if (options?.throwOnError) {
+        throw err;
+      }
+      return null;
+    }
+  }
+
+  /**
+   * 15. Gửi ảnh JPEG base64 để BE so khớp khuôn mặt Staff:
+   * POST /api/v1/pi/jobs/{jobId}/face-auth/verify
+   */
+  public async verifyStaffFace(
+    jobId: string,
+    body: FaceVerifyRequest,
+  ): Promise<FaceVerifyResponse> {
+    if (
+      !isValidUuid(jobId) ||
+      !isValidUuid(body?.sessionId) ||
+      !isValidUuid(body?.authJobStepId) ||
+      !isValidUuid(body?.transportSessionId)
+    ) {
+      throw new Error(
+        'FACE_INVALID_SCAN: jobId, sessionId, authJobStepId và transportSessionId phải là UUID hợp lệ.',
+      );
+    }
+
+    const transportLower = body.transportSessionId.trim().toLowerCase();
+    if (
+      transportLower === body.sessionId.trim().toLowerCase() ||
+      transportLower === jobId.trim().toLowerCase() ||
+      transportLower === body.authJobStepId.trim().toLowerCase()
+    ) {
+      throw new Error(
+        'FACE_INVALID_TRANSPORT_SESSION: transportSessionId phải là phiên MQTT thật, không được dùng sessionId/jobId/authJobStepId thay thế.',
+      );
+    }
+
+    const normalizedImage = normalizeFaceJpegBase64(body.image);
+    const lockKey = `${jobId.trim().toLowerCase()}:${body.authJobStepId.trim().toLowerCase()}:${body.sessionId.trim().toLowerCase()}`;
+    if (this.faceVerifyInFlight.has(lockKey)) {
+      throw new Error('FACE_VERIFY_IN_FLIGHT: Đang gửi ảnh xác thực cho phiên hiện tại.');
+    }
+
+    this.faceVerifyInFlight.add(lockKey);
+    try {
+      const raw = await apiClient.request<
+        Partial<FaceVerifyResponse> & { data?: Partial<FaceVerifyResponse> }
+      >(`/api/v1/pi/jobs/${encodeURIComponent(jobId)}/face-auth/verify`, {
+        method: 'POST',
+        body: {
+          sessionId: body.sessionId.trim(),
+          authJobStepId: body.authJobStepId.trim(),
+          transportSessionId: body.transportSessionId.trim(),
+          image: normalizedImage,
+        },
+        timeoutMs: 8_000,
+      });
+      const payload = raw?.data ?? raw;
+      const verified = payload?.verified === true;
+      const reason =
+        typeof payload?.reason === 'string' && payload.reason.trim().length > 0
+          ? payload.reason.trim()
+          : verified
+            ? 'MATCH'
+            : 'FACE_AI_UNAVAILABLE';
+      return { verified, reason };
+    } finally {
+      this.faceVerifyInFlight.delete(lockKey);
     }
   }
 }

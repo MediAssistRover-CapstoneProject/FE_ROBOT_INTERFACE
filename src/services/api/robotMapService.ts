@@ -9,6 +9,12 @@ import { NavigationGuidanceResult } from '../../features/navigation/navigationGu
 import { DEFAULT_ROBOT_CODE, generateUuid } from './config';
 import { parseDeviceJwtClaims } from './client';
 import { robotApiService } from './robotApiService';
+import {
+  getServerNowMs,
+  recordServerTime,
+  recordServerTimeFromHeaders,
+} from './serverClock';
+import type { DeliveryAuthMethod, DeliveryAuthPurpose } from './types';
 import defaultPresentationData from './defaultPresentationMap.json';
 
 export interface PresentationPoint {
@@ -281,8 +287,14 @@ let viewerLoginCooldownUntil = 0;
 let cachedActiveRobotId: string = '0e3f1083-2546-4f45-8004-5eda5cb75a6f';
 let hasResolvedRobotId = false;
 let robotLookupCooldownUntil = 0;
+const deliveryRequestCache = new Map<string, any>();
+const staffNameCache = new Map<string, string>();
+let staffDirectoryLoaded = false;
 
 export interface RobotSnapshotSummary {
+  robotId?: string | null;
+  robotName?: string | null;
+  observedAt?: string | null;
   pose: MapRobotPose | null;
   isPoseLive: boolean;
   status: string;
@@ -308,6 +320,7 @@ export interface JobCameraPreviewFrame {
   dataUri: string | null;
   capturedAt: string | null;
   revision: string | null;
+  receivedAtMs?: number;
   errorMessage?: string;
 }
 
@@ -315,6 +328,34 @@ export interface JobQrStepStatusResult {
   jobStatus: string;
   stepStatus: string | null;
   verified: boolean;
+  jobId?: string;
+  robotId?: string | null;
+  jobCode?: string | null;
+  cancelRequestedAt?: string | null;
+  selectedJobStepId?: string | null;
+  authJobStepId?: string | null;
+  stepCode?: string | null;
+  stepStartedAt?: string | null;
+  authMethod?: DeliveryAuthMethod | null;
+  purpose?: DeliveryAuthPurpose | null;
+  expiresAt?: string | null;
+  interruptionRequestedAt?: string | null;
+  serviceRequestId?: string | null;
+  requestCode?: string | null;
+  expectedAccountId?: string | null;
+  expectedPersonName?: string | null;
+  pickupLocationLabel?: string | null;
+  deliveryLocationLabel?: string | null;
+  verifiedActorAccountId?: string | null;
+  verifiedPurpose?: DeliveryAuthPurpose | null;
+}
+
+export interface DeliveryAuthPartyInfo {
+  requestCode: string | null;
+  expectedPersonName: string | null;
+  expectedAccountId: string | null;
+  pickupLocationLabel: string | null;
+  deliveryLocationLabel: string | null;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -335,6 +376,8 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummary {
+  recordServerTime(typeof snapshot?.observedAt === 'string' ? snapshot.observedAt : null);
+  recordServerTime(typeof guidData?.observedAt === 'string' ? guidData.observedAt : null);
   const p = snapshot?.latestPose;
   const pose: MapRobotPose | null =
     p && Number.isFinite(Number(p.xM)) && Number.isFinite(Number(p.yM))
@@ -399,6 +442,9 @@ function buildSnapshotSummary(snapshot: any, guidData: any): RobotSnapshotSummar
   }
 
   return {
+    robotId: snapshot?.robot?.robotId || null,
+    robotName: snapshot?.robot?.robotName || snapshot?.robot?.robotCode || null,
+    observedAt: typeof snapshot?.observedAt === 'string' ? snapshot.observedAt : null,
     pose,
     isPoseLive: Boolean(
       snapshot?.mqttConnected && snapshot?.heartbeatFresh && p?.fresh !== false
@@ -453,6 +499,9 @@ class RobotMapService {
     viewerLoginCooldownUntil = 0;
     hasResolvedRobotId = false;
     robotLookupCooldownUntil = 0;
+    deliveryRequestCache.clear();
+    staffNameCache.clear();
+    staffDirectoryLoaded = false;
   }
 
   /**
@@ -567,6 +616,7 @@ class RobotMapService {
       }
 
       if (snapRes?.ok) {
+        recordServerTimeFromHeaders(snapRes.headers);
         const snapData = await snapRes.json();
         initialSnapshot = buildSnapshotSummary(snapData, null);
         const sess = snapData?.navigationSession;
@@ -750,6 +800,7 @@ class RobotMapService {
       }
 
       if (snapRes.ok) {
+        recordServerTimeFromHeaders(snapRes.headers);
         const snapshot = await snapRes.json();
         const robotState = snapshot?.robot?.status || 'IDLE';
         const hasPlanPoints =
@@ -774,6 +825,8 @@ class RobotMapService {
 
     // Dự phòng khi mất kết nối mạng
     return {
+      robotId: null,
+      robotName: null,
       pose: null,
       isPoseLive: false,
       status: 'IDLE',
@@ -793,10 +846,18 @@ class RobotMapService {
   /**
    * Lấy khung hình camera mới nhất của robot từ server: GET /api/v1/jobs/{jobId}/camera-preview.jpg
    */
-  public async fetchJobCameraPreview(jobId: string): Promise<JobCameraPreviewFrame> {
+  public async fetchJobCameraPreview(
+    jobId: string,
+    externalSignal?: AbortSignal
+  ): Promise<JobCameraPreviewFrame> {
     const token = await this.getViewerToken();
     const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
     const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
     const timer = setTimeout(() => controller.abort(), 4_000);
 
     try {
@@ -808,19 +869,54 @@ class RobotMapService {
         }
       );
 
+      recordServerTimeFromHeaders(res.headers);
+
       if (res.status === 401) {
         cachedViewerToken = null;
         tokenExpiresAt = 0;
       }
 
       if (res.status === 200) {
+        const contentType = (
+          res.headers.get('Content-Type') ??
+          res.headers.get('content-type') ??
+          ''
+        ).toLowerCase();
+        if (
+          contentType &&
+          !contentType.includes('image/jpeg') &&
+          !contentType.includes('image/jpg')
+        ) {
+          return {
+            status: 200,
+            dataUri: null,
+            capturedAt: null,
+            revision: null,
+            receivedAtMs: getServerNowMs(),
+            errorMessage: 'Định dạng phản hồi camera không phải JPEG.',
+          };
+        }
         const buffer = await res.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const hasJpegMagic =
+          bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+        if (!hasJpegMagic) {
+          return {
+            status: 200,
+            dataUri: null,
+            capturedAt: null,
+            revision: null,
+            receivedAtMs: getServerNowMs(),
+            errorMessage: 'Khung hình JPEG không hợp lệ.',
+          };
+        }
         const b64 = arrayBufferToBase64(buffer);
         return {
           status: 200,
           dataUri: b64 ? `data:image/jpeg;base64,${b64}` : null,
           capturedAt: res.headers.get('X-Captured-At') || res.headers.get('x-captured-at'),
           revision: res.headers.get('X-Frame-Revision') || res.headers.get('x-frame-revision'),
+          receivedAtMs: getServerNowMs(),
         };
       }
 
@@ -830,6 +926,7 @@ class RobotMapService {
           dataUri: null,
           capturedAt: null,
           revision: null,
+          receivedAtMs: getServerNowMs(),
           errorMessage: 'Đang chờ khung hình camera mới từ máy chủ...',
         };
       }
@@ -840,6 +937,7 @@ class RobotMapService {
         dataUri: null,
         capturedAt: null,
         revision: null,
+        receivedAtMs: getServerNowMs(),
         errorMessage:
           res.status === 404
             ? 'Server chưa bật luồng /camera-preview.jpg cho Job giao nhận (HTTP 404).'
@@ -851,15 +949,20 @@ class RobotMapService {
         dataUri: null,
         capturedAt: null,
         revision: null,
+        receivedAtMs: getServerNowMs(),
         errorMessage: err instanceof Error ? err.message : 'Lỗi kết nối camera server.',
       };
     } finally {
       clearTimeout(timer);
+      if (externalSignal) {
+        externalSignal.removeEventListener('abort', onExternalAbort);
+      }
     }
   }
 
   /**
-   * Kiểm tra xác thực bước AUTHENTICATE QR trên Job qua GET /api/v1/jobs/{jobId}
+   * Kiểm tra xác thực bước AUTHENTICATE (QR hoặc Khuôn mặt) trên Job qua GET /api/v1/jobs/{jobId}.
+   * Nếu truyền stepId, chỉ đọc đúng bước đó — không bao giờ fallback sang bước AUTHENTICATE của chặng khác.
    */
   public async checkJobQrStepStatus(
     jobId: string,
@@ -872,34 +975,311 @@ class RobotMapService {
       const res = await fetch(`${REMOTE_API_BASE}/jobs/${encodeURIComponent(jobId)}`, {
         headers: { ...headers, Accept: 'application/json' },
       });
+      recordServerTimeFromHeaders(res.headers);
       if (res.status === 401) {
         cachedViewerToken = null;
         tokenExpiresAt = 0;
       }
       if (!res.ok) return null;
 
-      const detail = await res.json();
-      const jobStatus = String(detail?.job?.status || '');
+      const raw = await res.json();
+      const detail = raw?.data ?? raw;
+      const job = detail?.job ?? {};
+      const jobStatus = String(job?.status || '');
+      const selectedJobStepId = job?.selectedJobStepId ? String(job.selectedJobStepId) : null;
       const steps: any[] = Array.isArray(detail?.steps) ? detail.steps : [];
-      const targetStep =
-        (stepId ? steps.find((s) => s?.jobStepId === stepId) : undefined) ||
-        steps.find((s) => s?.stepTypeSnapshot === 'AUTHENTICATE');
+
+      const hasExplicitStepId = typeof stepId === 'string' && stepId.trim().length > 0;
+      const targetStep = hasExplicitStepId
+        ? steps.find((s) => s?.jobStepId === stepId)
+        : (selectedJobStepId ? steps.find((s) => s?.jobStepId === selectedJobStepId) : undefined) ||
+          steps.find((s) => s?.stepTypeSnapshot === 'AUTHENTICATE' && s?.status === 'RUNNING') ||
+          steps.find((s) => s?.stepTypeSnapshot === 'AUTHENTICATE');
 
       const stepStatus = targetStep?.status ? String(targetStep.status) : null;
-      const resultJson = targetStep?.resultJson;
+      const resolvedInputs =
+        targetStep?.resolvedInputsJson && typeof targetStep.resolvedInputsJson === 'object'
+          ? targetStep.resolvedInputsJson
+          : {};
+      const resultJson =
+        targetStep?.resultJson && typeof targetStep.resultJson === 'object'
+          ? targetStep.resultJson
+          : null;
+
+      const inferPurposeFromStepCode = (code: unknown): DeliveryAuthPurpose | null => {
+        if (typeof code !== 'string') return null;
+        const upper = code.toUpperCase();
+        if (upper.endsWith('_SENDER') || upper.includes('SENDER')) return 'DELIVERY_SENDER';
+        if (upper.endsWith('_RECEIVER') || upper.includes('RECEIVER')) return 'DELIVERY_RECEIVER';
+        return null;
+      };
+
+      const inputPurpose: DeliveryAuthPurpose | null =
+        resolvedInputs?.purpose === 'DELIVERY_SENDER' ||
+        resolvedInputs?.purpose === 'DELIVERY_RECEIVER'
+          ? resolvedInputs.purpose
+          : inferPurposeFromStepCode(targetStep?.stepCodeSnapshot);
+      const resultPurpose: DeliveryAuthPurpose | null =
+        resultJson?.purpose === 'DELIVERY_SENDER' || resultJson?.purpose === 'DELIVERY_RECEIVER'
+          ? resultJson.purpose
+          : null;
+      const purpose: DeliveryAuthPurpose | null = inputPurpose ?? resultPurpose;
+
+      // BE DeliveryAuthenticationPolicy: người gửi luôn dùng QR_CODE; chỉ người nhận mới có thể dùng FACE_VERIFICATION.
+      const jobAuthMethod =
+        purpose === 'DELIVERY_RECEIVER'
+          ? job?.inputJson?.authentication_method
+          : purpose === 'DELIVERY_SENDER' &&
+              (job?.inputJson?.authentication_method === 'QR_CODE' ||
+                job?.inputJson?.authentication_method === 'FACE_VERIFICATION')
+            ? 'QR_CODE'
+            : null;
+      const rawMethod =
+        resolvedInputs?.method ??
+        (resultJson?.action === 'AWAIT_FACE_VERIFICATION'
+          ? 'FACE_VERIFICATION'
+          : resultJson?.action === 'AWAIT_STAFF_VERIFICATION'
+            ? 'QR_CODE'
+            : null) ??
+        jobAuthMethod;
+      const authMethod: DeliveryAuthMethod | null =
+        rawMethod === 'QR_CODE' ||
+        rawMethod === 'FACE_VERIFICATION' ||
+        rawMethod === 'STAFF_CONFIRMATION'
+          ? rawMethod
+          : null;
+
+      const inputJson =
+        job?.inputJson && typeof job.inputJson === 'object' ? job.inputJson : {};
+      const serviceRequestId =
+        (typeof job?.serviceRequestId === 'string' && job.serviceRequestId) ||
+        (typeof resolvedInputs?.service_request_id === 'string' && resolvedInputs.service_request_id) ||
+        (typeof inputJson?.service_request_id === 'string' && inputJson.service_request_id) ||
+        null;
+
+      const expectedAccountId =
+        purpose === 'DELIVERY_SENDER'
+          ? (typeof inputJson?.expected_sender_account_id === 'string'
+              ? inputJson.expected_sender_account_id
+              : null)
+          : purpose === 'DELIVERY_RECEIVER'
+            ? (typeof inputJson?.expected_receiver_account_id === 'string'
+                ? inputJson.expected_receiver_account_id
+                : null)
+            : null;
+
+      const resultActorAccountId =
+        typeof resultJson?.actor_account_id === 'string'
+          ? resultJson.actor_account_id
+          : typeof resultJson?.actor_user_id === 'string'
+            ? resultJson.actor_user_id
+            : null;
+
+      const purposeMismatch = Boolean(
+        inputPurpose && resultPurpose && inputPurpose !== resultPurpose
+      );
+      const actorMismatch = Boolean(
+        expectedAccountId &&
+          resultActorAccountId &&
+          expectedAccountId.toLowerCase() !== resultActorAccountId.toLowerCase()
+      );
+      const explicitRejected = resultJson?.verified === false;
       const verifiedByResult = Boolean(
         resultJson && (resultJson.verified === true || resultJson.authenticated === true)
       );
-      const verified = stepStatus === 'SUCCEEDED' || verifiedByResult;
+      const verified =
+        !explicitRejected &&
+        !purposeMismatch &&
+        !actorMismatch &&
+        Boolean(targetStep) &&
+        (stepStatus === 'SUCCEEDED' || verifiedByResult);
+
+      let expiresAt: string | null =
+        typeof resultJson?.expires_at === 'string' ? resultJson.expires_at : null;
+      if (
+        !expiresAt &&
+        typeof targetStep?.startedAt === 'string' &&
+        typeof targetStep?.timeoutSecSnapshot === 'number' &&
+        Number.isFinite(targetStep.timeoutSecSnapshot)
+      ) {
+        const startedMs = Date.parse(targetStep.startedAt);
+        if (Number.isFinite(startedMs)) {
+          expiresAt = new Date(startedMs + targetStep.timeoutSecSnapshot * 1000).toISOString();
+        }
+      }
+
+      const expectedPersonName =
+        purpose === 'DELIVERY_SENDER'
+          ? (typeof inputJson?.expected_sender_name === 'string'
+              ? inputJson.expected_sender_name
+              : typeof inputJson?.sender_name === 'string'
+                ? inputJson.sender_name
+                : null)
+          : purpose === 'DELIVERY_RECEIVER'
+            ? (typeof inputJson?.expected_receiver_name === 'string'
+                ? inputJson.expected_receiver_name
+                : typeof inputJson?.receiver_name === 'string'
+                  ? inputJson.receiver_name
+                  : typeof inputJson?.recipient_name === 'string'
+                    ? inputJson.recipient_name
+                    : null)
+            : null;
 
       return {
         jobStatus,
         stepStatus,
         verified,
+        jobId: typeof job?.jobId === 'string' ? job.jobId : jobId,
+        robotId: typeof job?.robotId === 'string' ? job.robotId : null,
+        jobCode: typeof job?.jobCode === 'string' ? job.jobCode : null,
+        cancelRequestedAt:
+          typeof job?.cancelRequestedAt === 'string' ? job.cancelRequestedAt : null,
+        selectedJobStepId,
+        authJobStepId:
+          typeof targetStep?.jobStepId === 'string' ? targetStep.jobStepId : null,
+        stepCode:
+          typeof targetStep?.stepCodeSnapshot === 'string'
+            ? targetStep.stepCodeSnapshot
+            : null,
+        stepStartedAt:
+          typeof targetStep?.startedAt === 'string' ? targetStep.startedAt : null,
+        authMethod,
+        purpose,
+        expiresAt,
+        interruptionRequestedAt:
+          typeof targetStep?.interruptionRequestedAt === 'string'
+            ? targetStep.interruptionRequestedAt
+            : null,
+        serviceRequestId,
+        requestCode:
+          typeof inputJson?.request_code === 'string' ? inputJson.request_code : null,
+        expectedAccountId,
+        expectedPersonName,
+        pickupLocationLabel:
+          typeof inputJson?.pickup_room_code === 'string' ? inputJson.pickup_room_code : null,
+        deliveryLocationLabel:
+          typeof inputJson?.delivery_room_code === 'string'
+            ? inputJson.delivery_room_code
+            : null,
+        verifiedActorAccountId: resultActorAccountId,
+        verifiedPurpose: resultPurpose,
       };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Tải thông tin người cần xác thực (Sender/Receiver) và địa điểm từ dữ liệu BE cho phép.
+   * Không bao giờ throw lỗi để không làm gián đoạn màn hình xác thực.
+   */
+  public async loadDeliveryAuthPartyInfo(
+    serviceRequestId: string | null | undefined,
+    purpose: DeliveryAuthPurpose,
+    fallbackAccountId?: string | null
+  ): Promise<DeliveryAuthPartyInfo> {
+    let requestCode: string | null = null;
+    let expectedPersonName: string | null = null;
+    let expectedAccountId: string | null = fallbackAccountId ?? null;
+    let pickupLocationLabel: string | null = null;
+    let deliveryLocationLabel: string | null = null;
+
+    const token = await this.getViewerToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+
+    if (serviceRequestId) {
+      let delivery = deliveryRequestCache.get(serviceRequestId);
+      if (!delivery) {
+        try {
+          const res = await fetch(
+            `${REMOTE_API_BASE}/delivery-requests/${encodeURIComponent(serviceRequestId)}`,
+            { headers: { ...headers, Accept: 'application/json' } }
+          );
+          if (res.ok) {
+            const raw = await res.json();
+            delivery = raw?.data ?? raw;
+            if (delivery && typeof delivery === 'object') {
+              deliveryRequestCache.set(serviceRequestId, delivery);
+            }
+          }
+        } catch {}
+      }
+
+      if (delivery && typeof delivery === 'object') {
+        requestCode =
+          typeof delivery?.request?.requestCode === 'string'
+            ? delivery.request.requestCode
+            : null;
+        if (purpose === 'DELIVERY_SENDER') {
+          expectedAccountId =
+            typeof delivery?.expectedSenderAccountId === 'string'
+              ? delivery.expectedSenderAccountId
+              : expectedAccountId;
+        } else {
+          expectedAccountId =
+            typeof delivery?.expectedReceiverAccountId === 'string'
+              ? delivery.expectedReceiverAccountId
+              : expectedAccountId;
+          if (typeof delivery?.recipientName === 'string' && delivery.recipientName.trim()) {
+            expectedPersonName = delivery.recipientName.trim();
+          }
+        }
+      }
+    }
+
+    if (expectedAccountId && !expectedPersonName) {
+      const cached = staffNameCache.get(expectedAccountId.toLowerCase());
+      if (cached) {
+        expectedPersonName = cached;
+      } else if (!staffDirectoryLoaded && token) {
+        staffDirectoryLoaded = true;
+        try {
+          const staffRes = await fetch(`${REMOTE_API_BASE}/admin/staff?page=0&size=100`, {
+            headers: { ...headers, Accept: 'application/json' },
+          });
+          if (staffRes.ok) {
+            const raw = await staffRes.json();
+            const list: any[] = Array.isArray(raw?.content) ? raw.content : [];
+            for (const row of list) {
+              const accId = row?.account?.accountId;
+              const name = row?.account?.fullName || row?.account?.username || row?.staffCode;
+              if (typeof accId === 'string' && typeof name === 'string' && name.trim()) {
+                staffNameCache.set(accId.toLowerCase(), name.trim());
+              }
+            }
+          }
+        } catch {}
+
+        if (!staffNameCache.has(expectedAccountId.toLowerCase())) {
+          try {
+            const dutyRes = await fetch(`${REMOTE_API_BASE}/staff/on-duty?page=0&size=100`, {
+              headers: { ...headers, Accept: 'application/json' },
+            });
+            if (dutyRes.ok) {
+              const raw = await dutyRes.json();
+              const list: any[] = Array.isArray(raw?.content) ? raw.content : [];
+              for (const row of list) {
+                const accId = row?.accountId;
+                const name = row?.fullName;
+                if (typeof accId === 'string' && typeof name === 'string' && name.trim()) {
+                  staffNameCache.set(accId.toLowerCase(), name.trim());
+                }
+              }
+            }
+          } catch {}
+        }
+
+        expectedPersonName = staffNameCache.get(expectedAccountId.toLowerCase()) ?? null;
+      }
+    }
+
+    return {
+      requestCode,
+      expectedPersonName,
+      expectedAccountId,
+      pickupLocationLabel,
+      deliveryLocationLabel,
+    };
   }
 
   /**

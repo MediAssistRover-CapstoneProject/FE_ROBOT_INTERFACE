@@ -7,6 +7,7 @@ import {
   generateUuid,
 } from './config';
 import { DeviceTokenResponse } from './types';
+import { recordServerTimeFromHeaders } from './serverClock';
 
 export interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
@@ -149,6 +150,8 @@ class ApiClient {
         signal: controller.signal,
       });
 
+      recordServerTimeFromHeaders(response.headers);
+
       if (response.ok) {
         const data: DeviceTokenResponse = await response.json();
         this.token = data.accessToken;
@@ -230,6 +233,7 @@ class ApiClient {
       });
 
       clearTimeout(timer);
+      recordServerTimeFromHeaders(res.headers);
 
       if (!res.ok) {
         const errorText = await res.text().catch(() => '');

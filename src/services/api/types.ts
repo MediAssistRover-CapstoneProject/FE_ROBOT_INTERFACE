@@ -402,3 +402,50 @@ export interface DeviceMediaSessionEvent {
   enabled: boolean;
   session?: DeviceMediaSessionView | null;
 }
+
+export type DeliveryAuthMethod =
+  | 'QR_CODE'
+  | 'FACE_VERIFICATION'
+  | 'STAFF_CONFIRMATION';
+
+export type DeliveryAuthPurpose = 'DELIVERY_SENDER' | 'DELIVERY_RECEIVER';
+
+/**
+ * Cửa sổ quét khuôn mặt Staff do GET /api/v1/pi/jobs/{jobId}/face-auth
+ * hoặc MQTT SERVER_HEARTBEAT.staffFaceScan công bố.
+ */
+export interface StaffFaceScanWindow {
+  jobId: string;
+  authJobStepId: string;
+  sessionId: string;
+  expiresAt: string;
+  startedAt?: string | null;
+}
+
+export type FaceVerifyReason =
+  | 'MATCH'
+  | 'NO_FACE'
+  | 'MULTIPLE_FACES'
+  | 'LOW_QUALITY'
+  | 'NO_MATCH'
+  | 'FACE_AI_UNAVAILABLE'
+  | string;
+
+/**
+ * Request body cho POST /api/v1/pi/jobs/{jobId}/face-auth/verify
+ */
+export interface FaceVerifyRequest {
+  sessionId: string;
+  authJobStepId: string;
+  transportSessionId: string;
+  /** Ảnh JPEG base64 theo hợp đồng BE (bắt đầu bằng /9j/, tối đa 2MB raw / 2,800,000 ký tự) */
+  image: string;
+}
+
+/**
+ * Response cho POST /api/v1/pi/jobs/{jobId}/face-auth/verify
+ */
+export interface FaceVerifyResponse {
+  verified: boolean;
+  reason: FaceVerifyReason;
+}
