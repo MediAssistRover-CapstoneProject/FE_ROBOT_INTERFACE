@@ -18,9 +18,12 @@ Tài liệu này giải thích **vì sao bạn của bạn pull code về chạy
    - Khi app gọi `POST https://mediassistrover.duckdns.org/api/v1/pi/auth/token` với `ROBOT_MAR_01`, server trả về **`HTTP 401: Robot code hoặc device secret không hợp lệ`**.
    - Ngoài ra, [src/config/env.ts](../src/config/env.ts) đặt `useMock` mặc định `true` nếu chưa set `EXPO_PUBLIC_USE_MOCK=false`.
 
-2. **Dùng nguyên [.env.example](../.env.example) cũ bị trỏ nhầm về `localhost:8080`:**
-   - `.env.example` hiện để `EXPO_PUBLIC_ROBOT_API_URL=http://localhost:8080` và `ROBOT_MAR_01`.
+2. **File `.env` cũ còn trỏ nhầm về `localhost:8080`:**
+   - `.env.example` đã trỏ về HTTPS và robot `mar-v1`. File `.env` đã tạo trước đó cần cập nhật riêng; copy/pull code không tự thay các biến này.
    - Khi mở bằng Expo Go trên điện thoại thật, `config.ts` tự thay `localhost` thành IP LAN của laptop (hoặc host tunnel nếu chạy `--tunnel`). Nếu laptop bạn của bạn **không chạy Backend local cổng 8080**, mọi kết nối sẽ bị **`fetch failed`** hoặc hết thời gian chờ.
+   - Ví dụ log `http://10.3.68.63:8080` có thể xuất phát từ `localhost` trong `.env`, không phải server HTTPS. Kiểm tra URL ngay trong log `[API AUTH]`.
+   - Native fetch có thể trả `TypeError: Fetch request has been canceled` khi hết thời gian chờ. Client phân biệt timeout do timer của app với hủy từ caller bằng `AbortSignal`; không dựa riêng vào tên lỗi `AbortError`.
+   - Sau khi sửa URL/mã robot, nếu API trả `401` thì cần device secret đúng của robot đó. Đổi map/phòng hoặc tăng timeout không sửa được lỗi xác thực này. Không cần tạo một SOS thật để kiểm tra token.
 
 3. **Device JWT (`EXPO_PUBLIC_DEVICE_TOKEN`) bị hết hạn sau 1 giờ:**
    - Trong [src/services/api/client.ts](../src/services/api/client.ts), app kiểm tra hạn `exp` của `EXPO_PUBLIC_DEVICE_TOKEN`.

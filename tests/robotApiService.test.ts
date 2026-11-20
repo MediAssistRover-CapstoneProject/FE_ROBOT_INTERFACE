@@ -77,6 +77,7 @@ describe('apiClient', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     resetServerClock();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -166,6 +167,48 @@ describe('apiClient', () => {
       JSON.stringify({ robotId: 'robot-expired', exp: expiredSec }),
     ).toString('base64url');
     expect(apiClient.applyPreissuedToken(`hdr.${payload}.sig`)).toBe(false);
+  });
+
+  it('reports native canceled-fetch TypeError as an authentication timeout when its timer aborts', async () => {
+    vi.useFakeTimers();
+    apiClient.clearToken();
+    global.fetch = vi.fn<typeof fetch>().mockImplementation((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new TypeError('fetch failed: Fetch request has been canceled')), { once: true });
+    }));
+    const pending = apiClient.ensureDeviceToken('test-robot', 'fixture-only', undefined, 5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(pending).resolves.toBeNull();
+    expect(apiClient.getLastAuthError()).toContain('Quá thời gian chờ xác thực (5s)');
+    expect(apiClient.getLastAuthError()).toContain('http://localhost:8080');
+  });
+
+  it('distinguishes caller cancellation from authentication timeout', async () => {
+    apiClient.clearToken();
+    const caller = new AbortController();
+    global.fetch = vi.fn<typeof fetch>().mockImplementation((_url, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new TypeError('Fetch request has been canceled')), { once: true });
+    }));
+    const pending = apiClient.ensureDeviceToken('test-robot', 'fixture-only', caller.signal);
+    caller.abort();
+    await expect(pending).resolves.toBeNull();
+    expect(apiClient.getLastAuthError()).toBe('Yêu cầu xác thực đã bị hủy.');
+  });
+
+  it('keeps a connection failure distinct from a timer-driven cancellation', async () => {
+    apiClient.clearToken();
+    global.fetch = vi.fn<typeof fetch>().mockRejectedValue(new TypeError('Network request failed'));
+    await expect(apiClient.ensureDeviceToken('test-robot', 'fixture-only')).resolves.toBeNull();
+    expect(apiClient.getLastAuthError()).toBe('Network request failed');
+  });
+
+  it('does not send an authenticated SOS request when device authentication has failed', async () => {
+    apiClient.clearToken();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ message: 'Invalid device identity' }, 401));
+    global.fetch = fetchMock;
+    await expect(apiClient.request('/api/v1/pi/incidents/sos', { method: 'POST', body: { operationKey: 'fixture-only' } }))
+      .rejects.toThrow(/Robot chưa xác thực.*HTTP 401/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://localhost:8080/api/v1/pi/auth/token');
   });
 });
 

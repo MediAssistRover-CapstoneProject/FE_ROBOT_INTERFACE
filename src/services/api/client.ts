@@ -129,12 +129,16 @@ class ApiClient {
     }
 
     const controller = new AbortController();
+    let timedOut = false;
     const onExternalAbort = () => controller.abort();
     if (signal) {
       if (signal.aborted) controller.abort();
       else signal.addEventListener('abort', onExternalAbort, { once: true });
     }
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
 
     try {
       const authUrl = `${this.baseUrl}/api/v1/pi/auth/token`;
@@ -168,9 +172,12 @@ class ApiClient {
       this.lastAuthError = `HTTP ${response.status}${errorText ? `: ${errorText}` : response.statusText ? `: ${response.statusText}` : ''}`;
       console.warn(`[API AUTH] Lỗi (${this.baseUrl}):`, this.lastAuthError);
     } catch (err: unknown) {
-      const isAbort = err instanceof Error && err.name === 'AbortError';
-      this.lastAuthError = isAbort
-        ? `Quá thời gian chờ (${Math.round(timeoutMs / 1000)}s)`
+      // React Native may reject an aborted fetch with TypeError rather than AbortError.
+      // The signal and our timer identify the cause regardless of native error wording.
+      this.lastAuthError = timedOut
+        ? `Quá thời gian chờ xác thực (${Math.round(timeoutMs / 1000)}s) tới ${this.baseUrl}. Kiểm tra backend và địa chỉ API.`
+        : signal?.aborted || controller.signal.aborted
+          ? 'Yêu cầu xác thực đã bị hủy.'
         : err instanceof Error
           ? err.message
           : String(err);
@@ -215,9 +222,8 @@ class ApiClient {
 
     if (requiresAuth) {
       const token = await this.ensureDeviceToken();
-      if (token) {
-        reqHeaders.Authorization = `Bearer ${token}`;
-      }
+      if (!token) throw new Error(`Robot chưa xác thực được với máy chủ (${this.baseUrl}): ${this.lastAuthError || 'Chưa có Device token'}`);
+      reqHeaders.Authorization = `Bearer ${token}`;
     }
 
     const controller = new AbortController();
